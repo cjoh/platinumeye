@@ -33,6 +33,14 @@ const LOOK_SENSITIVITY = {
   touch: 0.0052
 };
 
+const ADS_CONFIG = {
+  sentinel: { fov: 50, sensitivity: 0.70, speed: 8 },
+  cyclone:  { fov: 60, sensitivity: 0.82, speed: 10 },
+  argus:    { fov: 65, sensitivity: 0.88, speed: 9 },
+  oracle:   { fov: 44, sensitivity: 0.60, speed: 7 },
+  phantom:  { fov: 14, sensitivity: 0.20, speed: 6 }
+};
+
 const WEAPON_MODELS = {
   sentinel: {
     obj: "/assets/weapons/quaternius/Pistol_1.obj",
@@ -61,7 +69,8 @@ const WEAPON_MODELS = {
     length: 0.68,
     position: { x: 0.38, y: -0.43, z: -0.88 },
     rotation: { x: 0, y: Math.PI / 2, z: 0 }
-  }
+  },
+  phantom: { buildFn: buildPhantomModel }
 };
 
 const GENERATED_TEXTURE_ATLAS_PATH = "/assets/textures/platinumeye-material-atlas.png";
@@ -116,6 +125,14 @@ const WEAPON_VISUALS = {
     metalness: 0.62,
     roughness: 0.28,
     muzzleScale: 1.45
+  },
+  phantom: {
+    base: "#1a2530",
+    accent: "#7dd4ff",
+    emissive: "#0d2035",
+    metalness: 0.72,
+    roughness: 0.22,
+    muzzleScale: 0.6
   }
 };
 
@@ -152,7 +169,9 @@ const dom = {
   damageFlash: document.querySelector("#damageFlash"),
   movePad: document.querySelector("#movePad"),
   moveKnob: document.querySelector("#moveKnob"),
-  touchFire: document.querySelector("#touchFire")
+  touchFire: document.querySelector("#touchFire"),
+  damageNumbers: document.querySelector("#damageNumbers"),
+  scopeOverlay: document.querySelector("#scopeOverlay")
 };
 
 const state = {
@@ -176,7 +195,7 @@ const state = {
     avatarId: getSavedAvatarId(),
     weapon: "sentinel",
     ownedWeapons: ["sentinel"],
-    ammo: { sentinel: "inf", cyclone: 0, argus: 0, oracle: 0 },
+    ammo: { sentinel: "inf", cyclone: 0, argus: 0, oracle: 0, phantom: 0 },
     lastShotAt: 0,
     respawnAt: 0,
     yOffset: 0,
@@ -191,7 +210,8 @@ const state = {
     keys: new Set(),
     moveStick: { x: 0, y: 0 },
     lookPointerId: null,
-    lastLook: null
+    lastLook: null,
+    mouseHeld: false
   },
   feedSeen: new Set(),
   lastStateSentAt: 0,
@@ -202,7 +222,9 @@ const state = {
   audio: null,
   localSnapshotSeen: false,
   lastStepAt: 0,
-  stepSide: 0
+  stepSide: 0,
+  ads: false,
+  adsFactor: 0
 };
 
 const scene = new THREE.Scene();
@@ -227,6 +249,7 @@ const minimapContext = dom.minimap.getContext("2d");
 const remoteAgents = new Map();
 const pickupMeshes = new Map();
 const tracers = [];
+const impacts = [];
 const avatarLoader = new GLTFLoader();
 const avatarTemplates = new Map();
 const avatarLoads = new Map();
@@ -2589,8 +2612,20 @@ function bindEvents() {
   document.addEventListener("pointerlockchange", updateLockPrompt);
   document.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== dom.canvas) return;
-    rotateView(event.movementX, event.movementY, LOOK_SENSITIVITY.mouse);
+    const adsCfg = ADS_CONFIG[state.local.weapon] || ADS_CONFIG.sentinel;
+    const sens = state.ads ? LOOK_SENSITIVITY.mouse * adsCfg.sensitivity : LOOK_SENSITIVITY.mouse;
+    rotateView(event.movementX, event.movementY, sens);
   });
+  document.addEventListener("mousedown", (event) => {
+    if (document.pointerLockElement !== dom.canvas) return;
+    if (event.button === 0) state.input.mouseHeld = true;
+    if (event.button === 2) state.ads = true;
+  });
+  document.addEventListener("mouseup", (event) => {
+    if (event.button === 0) state.input.mouseHeld = false;
+    if (event.button === 2) state.ads = false;
+  });
+  document.addEventListener("contextmenu", (event) => event.preventDefault());
   window.addEventListener("keydown", (event) => {
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight", "Space"].includes(event.code)) {
       event.preventDefault();
@@ -2829,11 +2864,15 @@ function wireSocket(socket) {
 
   socket.on("shot", (event) => {
     addTracer(event);
+    addImpact(event);
     if (event.shooterId === state.playerId) {
       weaponRig.muzzle.material.opacity = 1;
       state.recoil = Math.max(state.recoil, WEAPONS[event.weaponId]?.recoil || 0.04);
       playSound("shot", event.weaponId);
-      if (event.hitId) showHitMarker();
+      if (event.hitId) {
+        showHitMarker();
+        spawnDamageNumbers(event);
+      }
     } else {
       const shooter = state.players.get(event.shooterId);
       const distance = shooter ? Math.hypot(shooter.pos.x - state.local.pos.x, shooter.pos.z - state.local.pos.z) : 30;
@@ -2882,6 +2921,7 @@ function applyLocalPlayer(player) {
   state.local.respawnAt = player.respawnAt;
 
   if (!player.alive) {
+    state.ads = false;
     state.local.pos = { ...player.pos };
     state.local.groundY = floorHeightAt(state.arena, state.local.pos);
     state.local.jumpY = 0;
@@ -2995,11 +3035,13 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = performance.now() / 1000;
+  if (state.input.mouseHeld && WEAPONS[state.local.weapon]?.fullyAuto) fireWeapon();
   updateLocalMovement(dt);
   updateCamera(dt, time);
   updateRemoteAgents(dt);
   updatePickups(time);
   updateTracers(dt);
+  updateImpacts(dt);
   updateWater(time);
   updateAnimatedProps(dt, time);
   updateWeather(dt, time);
@@ -3117,20 +3159,38 @@ function updateCamera(dt, time) {
   const crouchOffset = state.local.crouch * -0.55; // lower head when crouched
   const eyeY = PLAYER_EYE_HEIGHT + crouchOffset + state.local.yOffset + bobY;
 
+  // ADS — lerp factor and FOV
+  const adsCfg = ADS_CONFIG[state.local.weapon] || ADS_CONFIG.sentinel;
+  const adsTarget = (state.ads && state.local.alive) ? 1 : 0;
+  state.adsFactor = lerp(state.adsFactor, adsTarget, Math.min(1, dt * adsCfg.speed));
+  const targetFov = lerp(72, adsCfg.fov, state.adsFactor);
+  if (Math.abs(camera.fov - targetFov) > 0.05) {
+    camera.fov = targetFov;
+    camera.updateProjectionMatrix();
+  }
+
+  // Phantom scope overlay — only fully visible at max ads
+  const isPhantomAds = state.local.weapon === "phantom" && state.adsFactor > 0.95;
+  dom.scopeOverlay.classList.toggle("is-hidden", !isPhantomAds);
+
   camera.position.set(state.local.pos.x + bobX * 0.0, eyeY, state.local.pos.z);
   camera.rotation.y = state.local.yaw;
   camera.rotation.x = state.local.pitch - state.recoil;
   state.recoil = Math.max(0, state.recoil - dt * 0.52);
 
+  // Weapon rig slides toward center when ADS, bobs less
+  const adsSwaySuppress = 1 - state.adsFactor * 0.85;
   weaponRig.group.position.copy(camera.position);
   weaponRig.group.rotation.copy(camera.rotation);
-  weaponRig.group.translateX(0.04 + bobX * 0.6);
-  weaponRig.group.translateY(-0.02 - state.recoil * 1.8 + bobY * 0.4 - state.local.crouch * 0.05);
-  weaponRig.group.translateZ(0.02);
+  weaponRig.group.translateX((0.04 + bobX * 0.6) * (1 - state.adsFactor));
+  weaponRig.group.translateY(-0.02 - state.recoil * 1.8 + bobY * 0.4 * adsSwaySuppress - state.local.crouch * 0.05);
+  weaponRig.group.translateZ(0.02 + state.adsFactor * 0.06);
+  // Hide weapon model while phantom scope is showing
+  weaponRig.group.visible = !isPhantomAds;
   const weaponVisual = WEAPON_VISUALS[state.local.weapon] || WEAPON_VISUALS.sentinel;
   weaponRig.body.material.color.set(weaponVisual.accent);
   weaponRig.body.material.emissive?.set(weaponVisual.emissive);
-  weaponRig.body.material.emissiveIntensity = state.local.weapon === "oracle" ? 0.28 : 0.1;
+  weaponRig.body.material.emissiveIntensity = (state.local.weapon === "oracle" || state.local.weapon === "phantom") ? 0.28 : 0.1;
   weaponRig.muzzle.material.color.set(weaponVisual.accent);
   weaponRig.muzzle.material.opacity = Math.max(0, weaponRig.muzzle.material.opacity - dt * 8);
   weaponRig.muzzle.scale.setScalar(1 + weaponRig.muzzle.material.opacity * weaponVisual.muzzleScale);
@@ -3164,6 +3224,86 @@ function setWeaponRigModel(weaponId) {
     });
 }
 
+function buildPhantomModel() {
+  const mat = (color, metal = 0.7, rough = 0.22) =>
+    new THREE.MeshStandardMaterial({ color, metalness: metal, roughness: rough });
+  const box = (w, h, d, color, metal, rough) =>
+    new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color, metal, rough));
+
+  const root = new THREE.Group();
+
+  // main receiver / stock body
+  const receiver = box(0.06, 0.07, 0.52, "#1a2530", 0.72, 0.22);
+  receiver.position.set(0.38, -0.44, -0.78);
+  root.add(receiver);
+
+  // long barrel
+  const barrel = box(0.03, 0.03, 0.78, "#0f1a24", 0.82, 0.16);
+  barrel.position.set(0.38, -0.42, -1.28);
+  root.add(barrel);
+
+  // muzzle brake
+  const brake = box(0.05, 0.05, 0.06, "#233040", 0.78, 0.2);
+  brake.position.set(0.38, -0.42, -1.7);
+  root.add(brake);
+
+  // stock
+  const stock = box(0.04, 0.06, 0.22, "#12202c", 0.6, 0.38);
+  stock.position.set(0.38, -0.46, -0.44);
+  root.add(stock);
+
+  // cheek rest
+  const cheek = box(0.04, 0.04, 0.12, "#1a2d3a", 0.6, 0.38);
+  cheek.position.set(0.38, -0.40, -0.48);
+  root.add(cheek);
+
+  // scope body
+  const scopeBody = box(0.04, 0.04, 0.28, "#101820", 0.85, 0.14);
+  scopeBody.position.set(0.38, -0.36, -0.84);
+  root.add(scopeBody);
+
+  // scope lens front
+  const lensF = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.018, 0.018, 0.01, 12),
+    new THREE.MeshStandardMaterial({ color: "#7dd4ff", metalness: 0.1, roughness: 0.05, emissive: "#2266aa", emissiveIntensity: 0.4 })
+  );
+  lensF.rotation.x = Math.PI / 2;
+  lensF.position.set(0.38, -0.36, -0.99);
+  root.add(lensF);
+
+  // scope lens rear
+  const lensR = lensF.clone();
+  lensR.position.set(0.38, -0.36, -0.70);
+  root.add(lensR);
+
+  // scope mount rings
+  for (const z of [-0.76, -0.94]) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.025, 0.008, 6, 12),
+      mat("#233040", 0.8, 0.2)
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0.38, -0.36, z);
+    root.add(ring);
+  }
+
+  // bipod legs (folded flat)
+  for (const side of [-1, 1]) {
+    const leg = box(0.012, 0.1, 0.014, "#1a2530", 0.7, 0.3);
+    leg.position.set(0.38 + side * 0.035, -0.50, -1.18);
+    leg.rotation.z = side * 0.2;
+    root.add(leg);
+  }
+
+  root.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+  return root;
+}
+
 function loadWeaponTemplate(weaponId) {
   const config = WEAPON_MODELS[weaponId] || WEAPON_MODELS.sentinel;
   if (weaponTemplates.has(weaponId)) {
@@ -3171,6 +3311,12 @@ function loadWeaponTemplate(weaponId) {
   }
   if (weaponLoads.has(weaponId)) {
     return weaponLoads.get(weaponId);
+  }
+
+  if (config.buildFn) {
+    const model = config.buildFn();
+    weaponTemplates.set(weaponId, model);
+    return Promise.resolve(model);
   }
 
   const load = new Promise((resolve, reject) => {
@@ -3239,11 +3385,11 @@ function skinWeaponMaterial(material, weaponId) {
 function skinSingleWeaponMaterial(material, weaponId, index) {
   const style = WEAPON_VISUALS[weaponId] || WEAPON_VISUALS.sentinel;
   const skinned = material.clone();
-  const useAccent = index % 3 === 1 || weaponId === "oracle";
+  const useAccent = index % 3 === 1 || weaponId === "oracle" || weaponId === "phantom";
   skinned.color = new THREE.Color(useAccent ? style.accent : style.base);
   skinned.roughness = style.roughness;
   skinned.metalness = style.metalness;
-  if (weaponId === "oracle") {
+  if (weaponId === "oracle" || weaponId === "phantom") {
     skinned.emissive = new THREE.Color(style.emissive);
     skinned.emissiveIntensity = 0.24;
   } else if (weaponId === "cyclone") {
@@ -3269,7 +3415,16 @@ function syncRemoteAgents() {
     }
     const agent = remoteAgents.get(player.id);
     agent.target = player;
-    agent.group.visible = player.alive;
+    if (agent.wasAlive && !player.alive) {
+      agent.collapseProgress = 0;
+    }
+    if (!agent.wasAlive && player.alive) {
+      agent.collapseProgress = 1;
+      agent.avatarRoot.rotation.x = 0;
+      agent.avatarRoot.position.y = 0;
+    }
+    agent.wasAlive = player.alive;
+    agent.group.visible = player.alive || agent.collapseProgress < 1;
     agent.colorRing.material.color.set(player.color);
     if (agent.nameKey !== `${player.name}:${player.color}`) {
       agent.nameSprite.material.map?.dispose();
@@ -3324,7 +3479,9 @@ function createAgent(player) {
     weaponProxy,
     nameKey: `${player.name}:${player.color}`,
     currentAvatarId: null,
-    currentWeaponId: null
+    currentWeaponId: null,
+    wasAlive: true,
+    collapseProgress: 1
   };
   setAgentAvatar(agent, player);
   setRemoteWeaponStyle(agent, player.weapon);
@@ -3366,7 +3523,7 @@ function setRemoteWeaponStyle(agent, weaponId) {
 function setRemoteWeaponProxyStyle(group, weaponId) {
   const style = WEAPON_VISUALS[weaponId] || WEAPON_VISUALS.sentinel;
   const weapon = WEAPONS[weaponId] || WEAPONS.sentinel;
-  const length = weaponId === "cyclone" ? 1.08 : weaponId === "argus" ? 1.0 : weaponId === "oracle" ? 0.86 : 0.72;
+  const length = weaponId === "cyclone" ? 1.08 : weaponId === "argus" ? 1.0 : weaponId === "oracle" ? 0.86 : weaponId === "phantom" ? 1.32 : 0.72;
   group.userData.body.scale.z = length;
   group.userData.body.material.color.set(style.base);
   group.userData.body.material.metalness = style.metalness;
@@ -3511,7 +3668,20 @@ function updateRemoteAgents(dt) {
     agent.group.rotation.y = lerpAngle(agent.group.rotation.y, target.yaw, Math.min(1, dt * 10));
     const healthRatio = target.health / MAX_HEALTH;
     const crouchScale = 1 - (target.crouch || 0) * 0.32;
-    agent.avatarRoot.scale.y = target.alive ? (0.92 + healthRatio * 0.08) * crouchScale : 0.1;
+    if (target.alive) {
+      agent.avatarRoot.scale.y = (0.92 + healthRatio * 0.08) * crouchScale;
+      agent.avatarRoot.rotation.x = 0;
+      agent.avatarRoot.position.y = 0;
+    } else if (agent.collapseProgress < 1) {
+      agent.collapseProgress = Math.min(1, agent.collapseProgress + dt * 2.6);
+      const t = 1 - (1 - agent.collapseProgress) ** 3;
+      agent.avatarRoot.rotation.x = t * (Math.PI / 2);
+      agent.avatarRoot.position.y = -t * 0.85;
+      agent.avatarRoot.scale.y = 1 - t * 0.1;
+    }
+    agent.weaponProxy.visible = target.alive;
+    agent.colorRing.visible = target.alive;
+    agent.nameSprite.visible = target.alive;
     agent.weaponProxy.position.y = -(target.crouch || 0) * 0.38;
     agent.colorRing.rotation.z += dt * 1.8;
   }
@@ -3581,7 +3751,7 @@ function addTracer(event) {
   });
   const line = new THREE.Line(geometry, material);
   scene.add(line);
-  tracers.push({ line, age: 0, life: event.weaponId === "oracle" ? 0.18 : 0.1 });
+  tracers.push({ line, age: 0, life: event.weaponId === "oracle" || event.weaponId === "phantom" ? 0.22 : 0.1 });
 }
 
 function updateTracers(dt) {
@@ -3593,6 +3763,70 @@ function updateTracers(dt) {
       scene.remove(tracer.line);
       tracers.splice(index, 1);
     }
+  }
+}
+
+function addImpact(event) {
+  const isHit = Boolean(event.hitId);
+  const color = isHit ? "#ff6622" : "#ccccaa";
+  const count = isHit ? 10 : 6;
+  const speed = isHit ? 5.5 : 3.5;
+  const life = isHit ? 0.38 : 0.22;
+  const geo = new THREE.SphereGeometry(isHit ? 0.055 : 0.04, 4, 4);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 });
+  const particles = [];
+  for (let i = 0; i < count; i++) {
+    const mesh = new THREE.Mesh(geo, mat.clone());
+    mesh.position.set(event.end.x, event.end.y, event.end.z);
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI;
+    mesh.userData.vel = new THREE.Vector3(
+      Math.sin(phi) * Math.cos(theta) * speed * (0.5 + Math.random() * 0.5),
+      Math.abs(Math.cos(phi)) * speed * (0.5 + Math.random() * 0.5),
+      Math.sin(phi) * Math.sin(theta) * speed * (0.5 + Math.random() * 0.5)
+    );
+    scene.add(mesh);
+    particles.push(mesh);
+  }
+  impacts.push({ particles, mat, age: 0, life });
+}
+
+function updateImpacts(dt) {
+  for (let i = impacts.length - 1; i >= 0; i--) {
+    const imp = impacts[i];
+    imp.age += dt;
+    const t = imp.age / imp.life;
+    const opacity = Math.max(0, 1 - t);
+    for (const mesh of imp.particles) {
+      mesh.position.addScaledVector(mesh.userData.vel, dt);
+      mesh.userData.vel.y -= 9 * dt;
+      mesh.material.opacity = opacity;
+    }
+    if (imp.age >= imp.life) {
+      for (const mesh of imp.particles) scene.remove(mesh);
+      impacts.splice(i, 1);
+    }
+  }
+}
+
+const _dmgVec = new THREE.Vector3();
+function spawnDamageNumbers(event) {
+  if (!event.damageResults?.length) return;
+  for (const result of event.damageResults) {
+    const total = result.damage + result.armorDamage;
+    if (total <= 0) continue;
+    _dmgVec.set(event.end.x, event.end.y + 0.4, event.end.z);
+    _dmgVec.project(camera);
+    const x = (_dmgVec.x * 0.5 + 0.5) * dom.canvas.clientWidth;
+    const y = (-_dmgVec.y * 0.5 + 0.5) * dom.canvas.clientHeight;
+    if (_dmgVec.z > 1) return;
+    const el = document.createElement("span");
+    el.className = "dmg-num" + (result.eliminated ? " is-kill" : result.armorDamage > 0 ? " is-armor" : " is-body");
+    el.textContent = result.eliminated ? `${total} 💀` : String(total);
+    el.style.left = `${x + (Math.random() - 0.5) * 18}px`;
+    el.style.top = `${y}px`;
+    dom.damageNumbers.appendChild(el);
+    el.addEventListener("animationend", () => el.remove(), { once: true });
   }
 }
 
@@ -3926,9 +4160,10 @@ function playWeaponShot(ctx, weaponId, remote = false, distance = 0) {
     sentinel: { bass: 95, crack: 280, tail: 0.18, noise: 0.05, pop: 1900, body: 320, snap: 4200 },
     cyclone: { bass: 130, crack: 420, tail: 0.09, noise: 0.038, pop: 2500, body: 480, snap: 5200 },
     argus: { bass: 58, crack: 122, tail: 0.34, noise: 0.085, pop: 1100, body: 220, snap: 3000 },
-    oracle: { bass: 50, crack: 148, tail: 0.42, noise: 0.05, pop: 2100, body: 280, snap: 4600 }
+    oracle: { bass: 50, crack: 148, tail: 0.42, noise: 0.05, pop: 2100, body: 280, snap: 4600 },
+    phantom: { bass: 38, crack: 90, tail: 0.55, noise: 0.03, pop: 1800, body: 240, snap: 5800 }
   };
-  const profile = profiles[id];
+  const profile = profiles[id] || profiles.sentinel;
   const now = ctx.currentTime;
   const distanceAtten = remote ? clamp(1 - distance / 60, 0.18, 1) : 1;
   const scale = (remote ? 0.55 : 1) * distanceAtten;
@@ -4006,11 +4241,18 @@ function playWeaponShot(ctx, weaponId, remote = false, distance = 0) {
     playTone(ctx, { frequency: 720, endFrequency: 240, type: "triangle", volume: 0.04 * scale, duration: 0.22, start: now + 0.025 });
     playTone(ctx, { frequency: 1450, endFrequency: 380, type: "sawtooth", volume: 0.018 * scale, duration: 0.18, start: now + 0.03 });
   }
+
+  // 8) Phantom supersonic crack + long tail
+  if (id === "phantom") {
+    playTone(ctx, { frequency: 3200, endFrequency: 180, type: "sawtooth", volume: 0.055 * scale, duration: 0.06, start: now });
+    playTone(ctx, { frequency: 900, endFrequency: 60, type: "triangle", volume: 0.07 * scale, duration: 0.48, start: now + 0.01 });
+    playTone(ctx, { frequency: 6500, endFrequency: 800, type: "sine", volume: 0.022 * scale, duration: 0.04, start: now + 0.002 });
+  }
 }
 
 function playPickupSound(ctx, type, weaponId) {
   const now = ctx.currentTime;
-  const weaponTone = { sentinel: 520, cyclone: 670, argus: 440, oracle: 840 }[weaponId] || 620;
+  const weaponTone = { sentinel: 520, cyclone: 670, argus: 440, oracle: 840, phantom: 960 }[weaponId] || 620;
   const profiles = {
     pickupHealth: { a: 520, b: 760, c: 980, volume: 0.04 },
     pickupArmor: { a: 430, b: 640, c: 820, volume: 0.038 },

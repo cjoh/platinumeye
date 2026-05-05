@@ -41,7 +41,8 @@ export const WEAPONS = {
     pickupAmmo: 72,
     color: "#55e0a3",
     tracer: "#9effcd",
-    recoil: 0.035
+    recoil: 0.035,
+    fullyAuto: true
   },
   argus: {
     id: "argus",
@@ -72,10 +73,25 @@ export const WEAPONS = {
     color: "#f6f08a",
     tracer: "#fff8a8",
     recoil: 0.12
+  },
+  phantom: {
+    id: "phantom",
+    name: "Phantom SR",
+    shortName: "PHNT",
+    damage: 82,
+    fireMs: 1650,
+    range: 140,
+    spread: 0.0008,
+    pellets: 1,
+    ammoMax: 10,
+    pickupAmmo: 5,
+    color: "#7dd4ff",
+    tracer: "#c8eeff",
+    recoil: 0.18
   }
 };
 
-export const WEAPON_ORDER = ["sentinel", "cyclone", "argus", "oracle"];
+export const WEAPON_ORDER = ["sentinel", "cyclone", "argus", "oracle", "phantom"];
 
 export const PICKUP_RULES = {
   medkit: {

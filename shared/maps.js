@@ -91,7 +91,8 @@ const BUNKER = {
     { id: "weapon-cyclone", type: "weapon", x: -10, z: 0, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 10, z: 0, weapon: "argus" },
     { id: "weapon-oracle", type: "weapon", x: 0, z: -6, weapon: "oracle" },
-    { id: "weapon-oracle-2", type: "weapon", x: 0, z: 6, weapon: "oracle" }
+    { id: "weapon-oracle-2", type: "weapon", x: 0, z: 6, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: -27, z: -21, weapon: "phantom" }
   ]
 };
 
@@ -185,7 +186,8 @@ const ARCHIVE = {
     { id: "weapon-cyclone", type: "weapon", x: -15, z: -3.5, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 15, z: 3.5, weapon: "argus" },
     { id: "weapon-oracle-n", type: "weapon", x: 0, z: -18.2, weapon: "oracle" },
-    { id: "weapon-oracle-s", type: "weapon", x: 0, z: 18.2, weapon: "oracle" }
+    { id: "weapon-oracle-s", type: "weapon", x: 0, z: 18.2, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: 24, z: -21, weapon: "phantom" }
   ]
 };
 
@@ -277,7 +279,8 @@ const COASTAL = {
     { id: "ammo-beach-e", type: "ammo", x: 22, z: 16, weapon: "argus" },
     { id: "weapon-cyclone", type: "weapon", x: -8, z: 0, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 8, z: 0, weapon: "argus" },
-    { id: "weapon-oracle", type: "weapon", x: 0, z: -16, weapon: "oracle" }
+    { id: "weapon-oracle", type: "weapon", x: 0, z: -16, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: -30, z: -24, weapon: "phantom" }
   ],
   // Decorative props (no collision) — palms, driftwood, antennas
   props: [
@@ -401,7 +404,8 @@ const FOREST = {
     { id: "ammo-mid-s", type: "ammo", x: 10, z: 18, weapon: "argus" },
     { id: "weapon-cyclone", type: "weapon", x: -14, z: 0, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 14, z: 0, weapon: "argus" },
-    { id: "weapon-oracle", type: "weapon", x: 0, z: 0, weapon: "oracle" }
+    { id: "weapon-oracle", type: "weapon", x: 0, z: 0, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: -36, z: -26, weapon: "phantom" }
   ],
   props: [
     // Decorative tree canopies are added on top of tree colliders by the renderer.
@@ -527,7 +531,8 @@ const FROSTGATE = {
     { id: "ammo-fwd-e", type: "ammo", x: 32, z: 28, weapon: "argus" },
     { id: "weapon-cyclone", type: "weapon", x: -12, z: 0, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 12, z: 0, weapon: "argus" },
-    { id: "weapon-oracle", type: "weapon", x: 0, z: 18, weapon: "oracle" }
+    { id: "weapon-oracle", type: "weapon", x: 0, z: 18, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: -38, z: -28, weapon: "phantom" }
   ],
   props: [
     { type: "snowpile", x: -16, z: -6 },
@@ -618,7 +623,8 @@ const REFINERY = {
     { id: "ammo-mid-s", type: "ammo", x: 0, z: 22, weapon: "argus" },
     { id: "weapon-cyclone", type: "weapon", x: -14, z: 0, weapon: "cyclone" },
     { id: "weapon-argus", type: "weapon", x: 14, z: 0, weapon: "argus" },
-    { id: "weapon-oracle", type: "weapon", x: 0, z: -3.4, weapon: "oracle" }
+    { id: "weapon-oracle", type: "weapon", x: 0, z: -3.4, weapon: "oracle" },
+    { id: "weapon-phantom", type: "weapon", x: -32, z: -26, weapon: "phantom" }
   ],
   props: [
     // Smokestacks emitting steam

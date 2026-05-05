@@ -84,7 +84,8 @@ class GameRoom {
         sentinel: Infinity,
         cyclone: 0,
         argus: 0,
-        oracle: 0
+        oracle: 0,
+        phantom: 0
       },
       yOffset: spawnY,
       crouch: 0,
@@ -150,7 +151,8 @@ class GameRoom {
         sentinel: Infinity,
         cyclone: weapon === "cyclone" ? 90 : 36,
         argus: weapon === "argus" ? 24 : 8,
-        oracle: 0
+        oracle: 0,
+        phantom: 0
       },
       yOffset: spawnY,
       crouch: 0,
@@ -350,6 +352,7 @@ class GameRoom {
       target.ammo.cyclone = Math.min(target.ammo.cyclone, 24);
       target.ammo.argus = Math.min(target.ammo.argus, 6);
       target.ammo.oracle = 0;
+      target.ammo.phantom = 0;
       attacker.score += 1;
       attacker.streak += 1;
       target.streak = 0;

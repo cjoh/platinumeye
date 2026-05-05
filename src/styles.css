@@ -909,8 +909,22 @@ input {
 }
 
 .death-screen strong {
-  color: #ef6b5c;
-  font-size: 1.6rem;
+  color: #f5c518;
+  font-size: 3.2rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-shadow: 3px 3px 0 #7a1a00, -2px -2px 0 #7a1a00, 0 0 24px #ff4400cc;
+  animation: wasted-slam 0.35s cubic-bezier(0.18, 1.6, 0.4, 1) both;
+}
+
+@keyframes wasted-slam {
+  0%   { opacity: 0; transform: scaleX(2.4) scaleY(0.3); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: scaleX(1) scaleY(1); }
+}
+
+.death-screen.is-hidden strong {
+  animation: none;
 }
 
 .death-screen span {
@@ -918,6 +932,64 @@ input {
   font-size: 1.3rem;
   font-weight: 900;
 }
+
+#damageNumbers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.dmg-num {
+  position: absolute;
+  font-family: inherit;
+  font-weight: 900;
+  font-size: 1.1rem;
+  pointer-events: none;
+  text-shadow: 1px 1px 3px #000a, -1px -1px 2px #000a;
+  animation: dmg-float 0.85s ease-out forwards;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+.dmg-num.is-body  { color: #ff4422; font-size: 1.25rem; }
+.dmg-num.is-armor { color: #88ddff; font-size: 1rem; }
+.dmg-num.is-kill  { color: #ffe033; font-size: 1.5rem; }
+
+@keyframes dmg-float {
+  0%   { opacity: 1;   transform: translate(-50%, -50%); }
+  100% { opacity: 0;   transform: translate(-50%, -260%); }
+}
+
+.scope-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle closest-side at 50% 50%, transparent 46%, #000 47%);
+}
+
+.scope-overlay::before,
+.scope-overlay::after {
+  content: "";
+  position: absolute;
+  background: rgba(200, 230, 255, 0.75);
+}
+
+/* horizontal crosshair line */
+.scope-overlay::before {
+  left: 0; right: 0;
+  top: calc(50% - 0.5px);
+  height: 1px;
+}
+
+/* vertical crosshair line */
+.scope-overlay::after {
+  top: 0; bottom: 0;
+  left: calc(50% - 0.5px);
+  width: 1px;
+}
+
+.scope-overlay.is-hidden { display: none; }
 
 .touch-controls {
   display: none;
