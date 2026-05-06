@@ -2878,6 +2878,7 @@ function wireSocket(socket) {
       const distance = shooter ? Math.hypot(shooter.pos.x - state.local.pos.x, shooter.pos.z - state.local.pos.z) : 30;
       playSound("remoteShot", event.weaponId, distance);
     }
+    triggerShotHitReactions(event);
   });
 
   socket.on("dry", () => {
@@ -3420,8 +3421,15 @@ function syncRemoteAgents() {
     }
     if (!agent.wasAlive && player.alive) {
       agent.collapseProgress = 1;
-      agent.avatarRoot.rotation.x = 0;
-      agent.avatarRoot.position.y = 0;
+      agent.avatarRoot.position.set(0, 0, 0);
+      agent.avatarRoot.rotation.set(0, 0, 0);
+      agent.hitReaction = {
+        age: 1,
+        life: 0.32,
+        intensity: 0,
+        direction: { x: 0, z: 1 }
+      };
+      resetAgentHitPose(agent);
     }
     agent.wasAlive = player.alive;
     agent.group.visible = player.alive || agent.collapseProgress < 1;
@@ -3450,6 +3458,7 @@ function createAgent(player) {
   const avatarRoot = new THREE.Group();
   avatarRoot.add(createFallbackAgentModel(player));
   const weaponProxy = createRemoteWeaponProxy(player.weapon);
+  const hitFlash = createAgentHitFlash(player.color);
   const colorRing = new THREE.Mesh(
     new THREE.TorusGeometry(0.52, 0.025, 6, 28),
     new THREE.MeshBasicMaterial({ color: player.color })
@@ -3461,7 +3470,7 @@ function createAgent(player) {
   );
   nameSprite.position.y = 2.2;
   nameSprite.scale.set(1.45, 0.36, 1);
-  group.add(avatarRoot, weaponProxy, colorRing, nameSprite);
+  group.add(avatarRoot, weaponProxy, colorRing, nameSprite, hitFlash);
   group.position.set(player.pos.x, player.yOffset || 0, player.pos.z);
   group.rotation.y = player.yaw;
   group.traverse((child) => {
@@ -3476,16 +3485,56 @@ function createAgent(player) {
     avatarRoot,
     colorRing,
     nameSprite,
+    hitFlash,
     weaponProxy,
     nameKey: `${player.name}:${player.color}`,
     currentAvatarId: null,
     currentWeaponId: null,
     wasAlive: true,
-    collapseProgress: 1
+    collapseProgress: 1,
+    hitReaction: {
+      age: 1,
+      life: 0.32,
+      intensity: 0,
+      direction: { x: 0, z: 1 }
+    }
   };
   setAgentAvatar(agent, player);
   setRemoteWeaponStyle(agent, player.weapon);
   return agent;
+}
+
+function createAgentHitFlash(color) {
+  const group = new THREE.Group();
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.58, 12, 8),
+    new THREE.MeshBasicMaterial({
+      color: "#fff1a8",
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      wireframe: true
+    })
+  );
+  shell.position.y = 1.0;
+  const bar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72, 0.045, 0.045),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    })
+  );
+  bar.position.y = 1.18;
+  bar.rotation.z = -0.18;
+  group.add(shell, bar);
+  group.visible = false;
+  group.userData.shell = shell;
+  group.userData.bar = bar;
+  return group;
 }
 
 function createRemoteWeaponProxy(weaponId) {
@@ -3657,6 +3706,137 @@ function makeNameTexture(name, color) {
   return texture;
 }
 
+function triggerShotHitReactions(event) {
+  const results = Array.isArray(event.damageResults) && event.damageResults.length
+    ? event.damageResults
+    : event.hitId
+      ? [{ targetId: event.hitId, damage: WEAPONS[event.weaponId]?.damage || 1, armorDamage: 0 }]
+      : [];
+
+  for (const result of results) {
+    if (!result?.targetId || result.targetId === state.playerId) continue;
+    const agent = remoteAgents.get(result.targetId);
+    if (!agent) continue;
+    const target = state.players.get(result.targetId) || agent.target;
+    const direction = normalize2d({
+      x: (target?.pos?.x || agent.group.position.x) - (event.origin?.x || agent.group.position.x),
+      z: (target?.pos?.z || agent.group.position.z) - (event.origin?.z || agent.group.position.z)
+    });
+    const totalDamage = Number(result.damage || 0) + Number(result.armorDamage || 0);
+    triggerAgentHitReaction(agent, direction, totalDamage, Boolean(result.eliminated));
+  }
+}
+
+function triggerAgentHitReaction(agent, direction, damage, eliminated) {
+  const reduced = prefersReducedMotion();
+  agent.hitReaction = {
+    age: 0,
+    life: reduced ? 0.16 : eliminated ? 0.44 : 0.32,
+    intensity: reduced ? 0.55 : clamp(0.55 + damage / 90, 0.55, eliminated ? 1.45 : 1.08),
+    direction
+  };
+  if (agent.hitFlash) {
+    agent.hitFlash.visible = true;
+    agent.hitFlash.userData.shell.material.color.set(eliminated ? "#ffed91" : "#fff1a8");
+    agent.hitFlash.userData.bar.material.color.set(eliminated ? "#ff6f5d" : agent.target?.color || "#f5e289");
+  }
+}
+
+function updateAgentHitReaction(agent, dt) {
+  const reaction = agent.hitReaction;
+  if (!reaction || reaction.age >= reaction.life) {
+    resetAgentHitPose(agent);
+    return defaultHitPose();
+  }
+
+  reaction.age += dt;
+  const t = clamp(reaction.age / Math.max(reaction.life, 0.001), 0, 1);
+  const fade = Math.pow(1 - t, 1.8);
+  const pulse = Math.sin(t * Math.PI);
+  const intensity = reaction.intensity || 1;
+
+  if (agent.hitFlash) {
+    const shell = agent.hitFlash.userData.shell;
+    const bar = agent.hitFlash.userData.bar;
+    agent.hitFlash.visible = t < 1;
+    shell.material.opacity = fade * 0.72;
+    bar.material.opacity = fade * 0.86;
+    agent.hitFlash.scale.setScalar(0.72 + pulse * 0.35 + intensity * 0.08);
+    agent.hitFlash.rotation.y += dt * 9;
+  }
+
+  if (prefersReducedMotion()) {
+    return defaultHitPose();
+  }
+
+  const localDirection = worldDirectionToAgentLocal(agent, reaction.direction);
+  const kick = fade * intensity;
+  return {
+    avatarOffsetX: localDirection.x * 0.12 * kick,
+    avatarOffsetY: pulse * 0.05 * intensity,
+    avatarOffsetZ: localDirection.z * 0.1 * kick,
+    avatarRotationX: -localDirection.z * 0.22 * kick,
+    avatarRotationZ: localDirection.x * 0.28 * kick,
+    bodyYScale: 1 - pulse * 0.11 * intensity,
+    bodyXZScale: 1 + pulse * 0.06 * intensity,
+    weaponY: pulse * 0.1 * intensity,
+    weaponOffsetX: localDirection.x * 0.1 * kick,
+    weaponOffsetZ: localDirection.z * 0.14 * kick,
+    weaponRotationX: -localDirection.z * 0.18 * kick,
+    weaponRotationZ: localDirection.x * 0.22 * kick
+  };
+}
+
+function resetAgentHitPose(agent) {
+  if (agent.hitFlash) {
+    agent.hitFlash.visible = false;
+    agent.hitFlash.userData.shell.material.opacity = 0;
+    agent.hitFlash.userData.bar.material.opacity = 0;
+  }
+}
+
+function defaultHitPose() {
+  return {
+    avatarOffsetX: 0,
+    avatarOffsetY: 0,
+    avatarOffsetZ: 0,
+    avatarRotationX: 0,
+    avatarRotationZ: 0,
+    bodyYScale: 1,
+    bodyXZScale: 1,
+    weaponY: 0,
+    weaponOffsetX: 0,
+    weaponOffsetZ: 0,
+    weaponRotationX: 0,
+    weaponRotationZ: 0
+  };
+}
+
+function worldDirectionToAgentLocal(agent, direction) {
+  const yaw = -agent.group.rotation.y;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return normalize2d({
+    x: direction.x * cos - direction.z * sin,
+    z: direction.x * sin + direction.z * cos
+  });
+}
+
+function normalize2d(vector) {
+  const length = Math.hypot(vector.x, vector.z);
+  if (!Number.isFinite(length) || length < 0.0001) {
+    return { x: 0, z: 1 };
+  }
+  return {
+    x: vector.x / length,
+    z: vector.z / length
+  };
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
+}
+
 function updateRemoteAgents(dt) {
   for (const agent of remoteAgents.values()) {
     const target = agent.target;
@@ -3668,21 +3848,28 @@ function updateRemoteAgents(dt) {
     agent.group.rotation.y = lerpAngle(agent.group.rotation.y, target.yaw, Math.min(1, dt * 10));
     const healthRatio = target.health / MAX_HEALTH;
     const crouchScale = 1 - (target.crouch || 0) * 0.32;
+    const hitPose = updateAgentHitReaction(agent, dt);
+    const bodyXZScale = hitPose.bodyXZScale || 1;
     if (target.alive) {
-      agent.avatarRoot.scale.y = (0.92 + healthRatio * 0.08) * crouchScale;
-      agent.avatarRoot.rotation.x = 0;
-      agent.avatarRoot.position.y = 0;
+      const baseScaleY = (0.92 + healthRatio * 0.08) * crouchScale;
+      agent.avatarRoot.position.set(hitPose.avatarOffsetX, hitPose.avatarOffsetY, hitPose.avatarOffsetZ);
+      agent.avatarRoot.rotation.set(hitPose.avatarRotationX, 0, hitPose.avatarRotationZ);
+      agent.avatarRoot.scale.set(bodyXZScale, baseScaleY * (hitPose.bodyYScale || 1), bodyXZScale);
     } else if (agent.collapseProgress < 1) {
       agent.collapseProgress = Math.min(1, agent.collapseProgress + dt * 2.6);
       const t = 1 - (1 - agent.collapseProgress) ** 3;
-      agent.avatarRoot.rotation.x = t * (Math.PI / 2);
-      agent.avatarRoot.position.y = -t * 0.85;
-      agent.avatarRoot.scale.y = 1 - t * 0.1;
+      agent.avatarRoot.position.set(hitPose.avatarOffsetX, -t * 0.85 + hitPose.avatarOffsetY, hitPose.avatarOffsetZ);
+      agent.avatarRoot.rotation.set(t * (Math.PI / 2) + hitPose.avatarRotationX, 0, hitPose.avatarRotationZ);
+      agent.avatarRoot.scale.set(bodyXZScale, (1 - t * 0.1) * (hitPose.bodyYScale || 1), bodyXZScale);
     }
     agent.weaponProxy.visible = target.alive;
     agent.colorRing.visible = target.alive;
     agent.nameSprite.visible = target.alive;
-    agent.weaponProxy.position.y = -(target.crouch || 0) * 0.38;
+    agent.weaponProxy.position.x = hitPose.weaponOffsetX || 0;
+    agent.weaponProxy.position.z = hitPose.weaponOffsetZ || 0;
+    agent.weaponProxy.position.y = -(target.crouch || 0) * 0.38 + (hitPose.weaponY || 0);
+    agent.weaponProxy.rotation.x = hitPose.weaponRotationX || 0;
+    agent.weaponProxy.rotation.z = hitPose.weaponRotationZ || 0;
     agent.colorRing.rotation.z += dt * 1.8;
   }
 }
