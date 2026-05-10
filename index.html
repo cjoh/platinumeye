@@ -76,6 +76,34 @@
           <button id="copyRoomButton" class="icon-button" type="button" title="Copy room link" aria-label="Copy room link">LINK</button>
         </div>
 
+        <!-- Bomb mode HUD (hidden in deathmatch) -->
+        <div id="bombHud" class="bomb-hud is-hidden">
+          <div class="round-score">
+            <span id="atkScore">0</span>
+            <span class="score-sep">:</span>
+            <span id="defScore">0</span>
+          </div>
+          <div id="roundTimer" class="round-timer">--:--</div>
+          <div id="phaseLabel" class="phase-label">FREEZE</div>
+          <div id="teamLabel" class="team-label">ATK</div>
+          <div id="cashDisplay" class="cash-display">$800</div>
+          <div id="bombIndicator" class="bomb-indicator is-hidden">● BOMB</div>
+          <div id="interactBar" class="interact-bar is-hidden">
+            <span id="interactLabel">PLANTING</span>
+            <div class="interact-track"><div id="interactFill" class="interact-fill"></div></div>
+          </div>
+        </div>
+
+        <!-- Buy menu (shown during freeze phase) -->
+        <div id="buyMenu" class="buy-menu is-hidden">
+          <div class="buy-menu-title">BUY MENU <span class="buy-cash" id="buyCash">$800</span></div>
+          <div class="buy-grid" id="buyGrid"></div>
+          <div class="buy-hint">Click to buy · B or ESC to close</div>
+        </div>
+
+        <!-- Round result banner -->
+        <div id="roundBanner" class="round-banner is-hidden"></div>
+
         <div class="reticle" aria-hidden="true">
           <span></span>
           <span></span>

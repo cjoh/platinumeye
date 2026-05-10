@@ -1,5 +1,7 @@
 import { DEFAULT_AVATAR_ID, isAvatarId } from "../shared/avatars.js";
 import { DEFAULT_MAP_ID, getMap, isMapId } from "../shared/maps.js";
+import { BombGame } from "./bombGame.js";
+import { BOMB_MODES } from "../shared/constants.js";
 import {
   MAX_ARMOR,
   MAX_BOTS_PER_ROOM,
@@ -30,9 +32,9 @@ import {
 const COLORS = ["#e8c15c", "#5fd2a5", "#ec6f5e", "#75a9ff", "#d995f6", "#efef8a", "#ff9f57", "#8ee0e4"];
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const BOT_PROFILES = [
-  { key: "atlas", name: "Atlas", avatarId: "character-d", weapon: "cyclone", speed: 4.1, reactionMs: 820, aimError: 0.095, shotPauseMs: 340, shotJitterMs: 220, pressure: 0.46 },
-  { key: "vesper", name: "Vesper", avatarId: "character-k", weapon: "argus", speed: 3.9, reactionMs: 940, aimError: 0.11, shotPauseMs: 520, shotJitterMs: 300, pressure: 0.42 },
-  { key: "cipher", name: "Cipher", avatarId: "character-q", weapon: "sentinel", speed: 4.25, reactionMs: 760, aimError: 0.085, shotPauseMs: 300, shotJitterMs: 220, pressure: 0.5 }
+  { key: "atlas", name: "Atlas", avatarId: "character-d", weapon: "cyclone", speed: 3.6, reactionMs: 1400, aimError: 0.22, shotPauseMs: 700, shotJitterMs: 480, pressure: 0.32 },
+  { key: "vesper", name: "Vesper", avatarId: "character-k", weapon: "argus", speed: 3.4, reactionMs: 1700, aimError: 0.28, shotPauseMs: 900, shotJitterMs: 600, pressure: 0.28 },
+  { key: "cipher", name: "Cipher", avatarId: "character-q", weapon: "sentinel", speed: 3.7, reactionMs: 1200, aimError: 0.19, shotPauseMs: 650, shotJitterMs: 440, pressure: 0.35 }
 ];
 const BOT_SPAWN_GRACE_MS = 1700;
 
@@ -50,6 +52,8 @@ class GameRoom {
     }));
     this.lastActiveAt = Date.now();
     this.feed = [];
+    this.mode = this.arena.mode === "bomb" ? BOMB_MODES.BOMB : BOMB_MODES.DEATHMATCH;
+    this.bombGame = this.mode === BOMB_MODES.BOMB ? new BombGame(this) : null;
   }
 
   get size() {
@@ -77,6 +81,8 @@ class GameRoom {
       score: 0,
       deaths: 0,
       streak: 0,
+      team: null,
+      cash: null,
       isBot: false,
       weapon: "sentinel",
       ownedWeapons: ["sentinel"],
@@ -240,6 +246,7 @@ class GameRoom {
   shoot(id, payload) {
     const player = this.players.get(id);
     if (!player || !player.alive) return null;
+    if (this.bombGame && (this.bombGame.phase === "freeze" || this.bombGame.phase === "end" || this.bombGame.phase === "over")) return null;
     const weapon = WEAPONS[player.weapon] || WEAPONS.sentinel;
     const now = Date.now();
     if (now < player.nextShotAt) return null;
@@ -369,8 +376,10 @@ class GameRoom {
     this.ensureBots();
 
     for (const player of this.players.values()) {
-      if (!player.alive && player.respawnAt && now >= player.respawnAt) {
-        this.respawn(player);
+      if (this.mode === BOMB_MODES.DEATHMATCH) {
+        if (!player.alive && player.respawnAt && now >= player.respawnAt) {
+          this.respawn(player);
+        }
       }
     }
 
@@ -390,6 +399,11 @@ class GameRoom {
       if (!pickup.active && pickup.respawnAt <= now) {
         pickup.active = true;
       }
+    }
+    if (this.bombGame) {
+      this.bombGame.tickInteractions();
+      const bombEvents = this.bombGame.update();
+      for (const ev of bombEvents) events.push(ev);
     }
     return events;
   }
@@ -455,7 +469,11 @@ class GameRoom {
   }
 
   pickBotTarget(bot) {
-    const targets = Array.from(this.players.values()).filter((player) => player.id !== bot.id && player.alive);
+    const targets = Array.from(this.players.values()).filter((player) => {
+      if (player.id === bot.id || !player.alive) return false;
+      if (this.mode === "bomb" && bot.team && player.team === bot.team) return false;
+      return true;
+    });
     const humans = targets.filter((player) => !player.isBot);
     const pool = humans.length ? humans : targets;
     return pool.sort((a, b) => distance2d(bot.pos, a.pos) - distance2d(bot.pos, b.pos))[0] || null;
@@ -543,7 +561,9 @@ class GameRoom {
         ammo: serializeAmmo(player.ammo),
         respawnAt: player.respawnAt,
         yOffset: player.yOffset || 0,
-        crouch: player.crouch || 0
+        crouch: player.crouch || 0,
+        team: player.team || null,
+        cash: player.cash || 0
       })),
       pickups: this.pickups.map((pickup) => ({
         id: pickup.id,
@@ -553,7 +573,8 @@ class GameRoom {
         z: pickup.z,
         active: pickup.active
       })),
-      feed: this.feed
+      feed: this.feed,
+      bombRound: this.bombGame ? this.bombGame.serializeRound() : null
     };
   }
 }
@@ -611,6 +632,30 @@ export function registerGameServer(io) {
       room?.switchWeapon(socket.id, weaponId);
     });
 
+    socket.on("buy", (itemId) => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      if (!room?.bombGame) return;
+      const result = room.bombGame.buy(socket.id, itemId);
+      socket.emit("buyResult", result);
+      if (result.ok) io.to(room.code).emit("snapshot", room.serialize());
+    });
+    socket.on("plantStart", () => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      room?.bombGame?.startPlant(socket.id);
+    });
+    socket.on("plantCancel", () => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      room?.bombGame?.cancelPlant(socket.id);
+    });
+    socket.on("defuseStart", () => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      room?.bombGame?.startDefuse(socket.id);
+    });
+    socket.on("defuseCancel", () => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      room?.bombGame?.cancelDefuse(socket.id);
+    });
+
     socket.on("shoot", (payload) => {
       const roomCode = socketRooms.get(socket.id);
       const room = rooms.get(roomCode);
@@ -641,8 +686,12 @@ export function registerGameServer(io) {
         rooms.delete(roomCode);
         continue;
       }
-      for (const event of events) {
-        io.to(roomCode).emit(event.type, event);
+      for (const ev of events) {
+        if (ev.type === "shot") {
+          io.to(roomCode).emit("shot", ev);
+        } else {
+          io.to(roomCode).emit(ev.type, ev);
+        }
       }
       io.to(roomCode).emit("snapshot", room.serialize());
     }

@@ -15,6 +15,7 @@ import {
   PLAYER_EYE_HEIGHT,
   PLAYER_RADIUS,
   SCORE_LIMIT,
+  SHOP_ITEMS,
   TRAINING_BOT_COUNT,
   WEAPON_ORDER,
   WEAPONS
@@ -164,6 +165,7 @@ const dom = {
   feed: document.querySelector("#feed"),
   lockPrompt: document.querySelector("#lockPrompt"),
   deathScreen: document.querySelector("#deathScreen"),
+  deathTitle: document.querySelector("#deathTitle"),
   respawnTimer: document.querySelector("#respawnTimer"),
   hitMarker: document.querySelector("#hitMarker"),
   damageFlash: document.querySelector("#damageFlash"),
@@ -171,7 +173,22 @@ const dom = {
   moveKnob: document.querySelector("#moveKnob"),
   touchFire: document.querySelector("#touchFire"),
   damageNumbers: document.querySelector("#damageNumbers"),
-  scopeOverlay: document.querySelector("#scopeOverlay")
+  scopeOverlay: document.querySelector("#scopeOverlay"),
+  bombHud: document.querySelector("#bombHud"),
+  roundTimer: document.querySelector("#roundTimer"),
+  phaseLabel: document.querySelector("#phaseLabel"),
+  teamLabel: document.querySelector("#teamLabel"),
+  cashDisplay: document.querySelector("#cashDisplay"),
+  bombIndicator: document.querySelector("#bombIndicator"),
+  atkScore: document.querySelector("#atkScore"),
+  defScore: document.querySelector("#defScore"),
+  interactBar: document.querySelector("#interactBar"),
+  interactLabel: document.querySelector("#interactLabel"),
+  interactFill: document.querySelector("#interactFill"),
+  buyMenu: document.querySelector("#buyMenu"),
+  buyGrid: document.querySelector("#buyGrid"),
+  buyCash: document.querySelector("#buyCash"),
+  roundBanner: document.querySelector("#roundBanner")
 };
 
 const state = {
@@ -224,8 +241,24 @@ const state = {
   lastStepAt: 0,
   stepSide: 0,
   ads: false,
-  adsFactor: 0
+  adsFactor: 0,
+  bomb: {
+    mode: "deathmatch",    // "deathmatch" | "bomb"
+    phase: null,           // "freeze" | "live" | "planted" | "end" | "over"
+    round: 0,
+    scores: { attack: 0, defend: 0 },
+    phaseEndsAt: 0,
+    bombCarrierId: null,
+    bombPlanted: null,
+    myTeam: null,
+    cash: 0,
+    plantHeld: false,
+    defuseHeld: false,
+    buyMenuOpen: false,
+  }
 };
+
+let _buyMenuLastCash = -1;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.05, 320);
@@ -2639,6 +2672,32 @@ function bindEvents() {
     if (weaponIndex >= 0 && weaponIndex < WEAPON_ORDER.length) {
       selectWeapon(WEAPON_ORDER[weaponIndex]);
     }
+    if (event.code === "KeyB" && state.bomb.mode === "bomb" && state.bomb.phase === "freeze") {
+      event.preventDefault();
+      if (state.bomb.buyMenuOpen) {
+        closeBuyMenu();
+      } else {
+        state.bomb.buyMenuOpen = true;
+        document.exitPointerLock?.();
+        renderBuyMenu();
+      }
+      return;
+    }
+    if (event.code === "Escape" && state.bomb.buyMenuOpen) {
+      closeBuyMenu();
+      return;
+    }
+    if (event.code === "KeyF" && state.bomb.mode === "bomb") {
+      state.bomb.plantHeld = true;
+      state.bomb._plantStart = Date.now();
+      if (state.bomb.myTeam === "attack" && state.bomb.bombCarrierId === state.playerId) {
+        state.socket.emit("plantStart");
+      } else if (state.bomb.myTeam === "defend" && state.bomb.bombPlanted) {
+        state.bomb.defuseHeld = true;
+        state.bomb._defuseStart = Date.now();
+        state.socket.emit("defuseStart");
+      }
+    }
     state.input.keys.add(event.code);
   });
   window.addEventListener("keyup", (event) => {
@@ -2646,6 +2705,16 @@ function bindEvents() {
       event.preventDefault();
       dom.scoreboard.classList.remove("is-open");
       return;
+    }
+    if (event.code === "KeyF") {
+      state.bomb.plantHeld = false;
+      state.bomb.defuseHeld = false;
+      state.bomb._plantStart = null;
+      state.bomb._defuseStart = null;
+      if (state.socket && state.bomb.mode === "bomb") {
+        state.socket.emit("plantCancel");
+        state.socket.emit("defuseCancel");
+      }
     }
     state.input.keys.delete(event.code);
   });
@@ -2844,8 +2913,13 @@ function wireSocket(socket) {
     dom.roomCode.textContent = snapshot.roomCode;
     if (snapshot.mapId && snapshot.mapId !== state.arena.id) {
       state.mapId = snapshot.mapId;
-      applyMap(getMap(snapshot.mapId));
+      const newArena = getMap(snapshot.mapId);
+      applyMap(newArena);
       if (dom.mapName) dom.mapName.textContent = state.arena.name;
+      if (newArena.mode !== "bomb") {
+        state.bomb.mode = "deathmatch";
+        state.bomb.phase = null;
+      }
     }
     state.players = new Map(snapshot.players.map((player) => [player.id, player]));
     for (const pickup of snapshot.pickups) {
@@ -2854,6 +2928,12 @@ function wireSocket(socket) {
     const local = state.players.get(state.playerId);
     if (local) {
       applyLocalPlayer(local);
+    }
+    if (snapshot.bombRound) {
+      applyBombRound(snapshot.bombRound, snapshot.players);
+    } else if (state.bomb.mode !== "deathmatch") {
+      state.bomb.mode = "deathmatch";
+      state.bomb.phase = null;
     }
     syncRemoteAgents();
     syncPickupMeshes();
@@ -2884,6 +2964,70 @@ function wireSocket(socket) {
   socket.on("dry", () => {
     playSound("dry");
   });
+
+  socket.on("roundStart", (data) => {
+    state.bomb.round = data.round;
+    state.bomb.scores = data.scores;
+    state.bomb.phase = "freeze";
+    state.bomb.phaseEndsAt = data.freezeUntil;
+    state.bomb.bombPlanted = null;
+    state.bomb.bombCarrierId = null;
+    state.bomb.plantHeld = false;
+    state.bomb.defuseHeld = false;
+    if (data.cashByPlayer && state.playerId) {
+      const myCash = data.cashByPlayer[state.playerId];
+      if (myCash != null) state.bomb.cash = myCash;
+    }
+  });
+
+  socket.on("roundEnd", (data) => {
+    state.bomb.scores = data.scores;
+    state.bomb.phase = "end";
+    if (state.bomb.buyMenuOpen) closeBuyMenu();
+    showRoundResult(data.winner);
+  });
+
+  socket.on("bombPlanted", (data) => {
+    state.bomb.bombPlanted = data;
+    state.bomb.phase = "planted";
+    state.bomb.phaseEndsAt = data.endsAt;
+    playSound("bombPlanted");
+  });
+
+  socket.on("bombDefused", () => {
+    state.bomb.bombPlanted = null;
+    playSound("bombDefused");
+  });
+
+  socket.on("bombExplode", () => {
+    state.bomb.bombPlanted = null;
+    playSound("bombExplode");
+  });
+
+  socket.on("matchOver", (data) => {
+    state.bomb.phase = "over";
+    state.bomb.scores = data.scores;
+  });
+
+  socket.on("phaseChange", (data) => {
+    state.bomb.phase = data.phase;
+    state.bomb.phaseEndsAt = data.endsAt;
+  });
+}
+
+function applyBombRound(round, players) {
+  state.bomb.mode = round.mode || "deathmatch";
+  state.bomb.phase = round.phase;
+  state.bomb.round = round.round;
+  state.bomb.scores = round.scores;
+  state.bomb.phaseEndsAt = round.phaseEndsAt;
+  state.bomb.bombCarrierId = round.bombCarrierId;
+  state.bomb.bombPlanted = round.bombPlanted;
+  const me = players.find(p => p.id === state.playerId);
+  if (me) {
+    state.bomb.myTeam = me.team;
+    state.bomb.cash = me.cash || 0;
+  }
 }
 
 function applyLocalPlayer(player) {
@@ -3046,8 +3190,9 @@ function animate() {
   updateWater(time);
   updateAnimatedProps(dt, time);
   updateWeather(dt, time);
-  updateHud();
   renderer.render(scene, camera);
+  updateHud();
+  updateBombHud();
 }
 
 function updateAnimatedProps(dt, time) {
@@ -4028,6 +4173,13 @@ function updateHud() {
   dom.ammoValue.textContent = ammo === "inf" ? "--" : String(ammo || 0).padStart(2, "0");
   renderWeaponInventory();
 
+  // in bomb mode, show "ELIMINATED" instead of respawn timer
+  if (state.bomb.mode === "bomb" && !state.local.alive) {
+    dom.deathScreen.classList.remove("is-hidden");
+    dom.deathTitle.textContent = "ELIMINATED";
+    dom.respawnTimer.textContent = "";
+    return; // skip rest of death screen logic
+  }
   if (!state.local.alive && state.local.respawnAt) {
     dom.deathScreen.classList.remove("is-hidden");
     const seconds = Math.max(0, (state.local.respawnAt - Date.now()) / 1000);
@@ -4036,6 +4188,119 @@ function updateHud() {
     dom.deathScreen.classList.add("is-hidden");
   }
   drawMinimap();
+}
+
+function updateBombHud() {
+  const b = state.bomb;
+  if (b.mode !== "bomb") {
+    dom.bombHud?.classList.add("is-hidden");
+    dom.buyMenu?.classList.add("is-hidden");
+    _buyMenuLastCash = -1;
+    return;
+  }
+  dom.bombHud?.classList.remove("is-hidden");
+
+  // scores
+  dom.atkScore.textContent = b.scores.attack;
+  dom.defScore.textContent = b.scores.defend;
+
+  // timer
+  const remaining = Math.max(0, b.phaseEndsAt - Date.now());
+  const secs = Math.ceil(remaining / 1000);
+  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+  const ss = String(secs % 60).padStart(2, "0");
+  dom.roundTimer.textContent = `${mm}:${ss}`;
+  dom.roundTimer.classList.toggle("is-urgent", secs <= 10 && b.phase === "live");
+
+  // phase label
+  const phaseNames = { freeze: "BUY PHASE", live: "LIVE", planted: "BOMB PLANTED", end: "ROUND OVER", over: "MATCH OVER" };
+  dom.phaseLabel.textContent = phaseNames[b.phase] || "";
+
+  // team label
+  if (b.myTeam) {
+    dom.teamLabel.textContent = b.myTeam === "attack" ? "ATK" : "DEF";
+    dom.teamLabel.className = "team-label " + (b.myTeam === "attack" ? "atk" : "def");
+  }
+
+  // cash
+  dom.cashDisplay.textContent = `$${b.cash}`;
+
+  // bomb carrier indicator
+  const isBombCarrier = b.bombCarrierId === state.playerId;
+  dom.bombIndicator.classList.toggle("is-hidden", !isBombCarrier && !b.bombPlanted);
+
+  // buy menu — only open when B was pressed during freeze
+  if (b.buyMenuOpen && b.phase === "freeze") {
+    renderBuyMenu();
+  } else if (b.buyMenuOpen && b.phase !== "freeze") {
+    closeBuyMenu();
+  }
+
+  // interact bar
+  updateInteractBar();
+}
+
+function closeBuyMenu() {
+  state.bomb.buyMenuOpen = false;
+  dom.buyMenu?.classList.add("is-hidden");
+  _buyMenuLastCash = -1;
+  if (state.connected && !isTouchDevice()) {
+    dom.canvas.requestPointerLock?.()?.catch?.(() => {});
+  }
+}
+
+function renderBuyMenu() {
+  if (!dom.buyMenu || !dom.buyGrid) {
+    console.warn("renderBuyMenu: dom.buyMenu or dom.buyGrid is null");
+    return;
+  }
+  dom.buyMenu.classList.remove("is-hidden");
+  if (state.bomb.cash === _buyMenuLastCash) return;
+  _buyMenuLastCash = state.bomb.cash;
+  dom.buyCash.textContent = `$${state.bomb.cash}`;
+
+  dom.buyGrid.innerHTML = "";
+  for (const item of SHOP_ITEMS) {
+    const label = item.type === "weapon"
+      ? (WEAPONS[item.id]?.name || item.id)
+      : item.id === "armor50" ? "Light Armor" : "Full Armor";
+    const canAfford = state.bomb.cash >= item.cost;
+    const btn = document.createElement("button");
+    btn.className = "buy-item";
+    btn.dataset.item = item.id;
+    btn.disabled = !canAfford;
+    btn.innerHTML = `<span class="buy-item-name">${label}</span><span class="buy-item-cost">$${item.cost}</span>`;
+    btn.addEventListener("click", () => state.socket.emit("buy", item.id));
+    dom.buyGrid.appendChild(btn);
+  }
+  console.log("renderBuyMenu: rendered", SHOP_ITEMS.length, "items, cash =", state.bomb.cash, "grid children =", dom.buyGrid.children.length);
+}
+
+function updateInteractBar() {
+  // plant progress
+  const now = Date.now();
+  if (state.bomb.plantHeld && state.bomb.myTeam === "attack" && state.bomb.bombCarrierId === state.playerId && state.bomb.phase === "live") {
+    dom.interactBar?.classList.remove("is-hidden");
+    dom.interactLabel.textContent = "PLANTING";
+    dom.interactFill.style.width = Math.min(100, ((now - (state.bomb._plantStart || now)) / 3000) * 100) + "%";
+  } else if (state.bomb.defuseHeld && state.bomb.myTeam === "defend" && state.bomb.bombPlanted && state.bomb.phase === "planted") {
+    dom.interactBar?.classList.remove("is-hidden");
+    dom.interactLabel.textContent = "DEFUSING";
+    dom.interactFill.style.width = Math.min(100, ((now - (state.bomb._defuseStart || now)) / 5000) * 100) + "%";
+  } else {
+    dom.interactBar?.classList.add("is-hidden");
+    dom.interactFill.style.width = "0%";
+  }
+}
+
+function showRoundResult(winner) {
+  if (!dom.roundBanner || !state.bomb.myTeam) return;
+  const won = winner === state.bomb.myTeam;
+  dom.roundBanner.textContent = won ? "ROUND WIN" : "ROUND LOSS";
+  dom.roundBanner.className = "round-banner is-hidden " + (won ? "win" : "loss");
+  void dom.roundBanner.offsetWidth; // force reflow to restart animation
+  dom.roundBanner.classList.remove("is-hidden");
+  setTimeout(() => dom.roundBanner.classList.add("is-hidden"), 3500);
 }
 
 function renderWeaponInventory() {
@@ -4321,6 +4586,15 @@ function playSound(type, weaponId = "sentinel", distance = 0) {
       playNoise(ctx, { volume: 0.05, duration: 0.18, filterType: "lowpass", filterFrequency: 320, start: now });
       playTone(ctx, { frequency: 90, endFrequency: 50, type: "sawtooth", volume: 0.04, duration: 0.16, start: now });
       break;
+    case "bombPlanted":
+      playBombSound(ctx, "plant");
+      break;
+    case "bombDefused":
+      playBombSound(ctx, "defuse");
+      break;
+    case "bombExplode":
+      playBombSound(ctx, "explode");
+      break;
     default:
       break;
   }
@@ -4478,6 +4752,22 @@ function playStepSound(ctx) {
   }
   playNoise(ctx, { volume, duration: 0.08, filterType, filterFrequency: filterFreq, start: now });
   playTone(ctx, { frequency: pitch, endFrequency: pitch * 0.7, type: "triangle", volume: 0.011, duration: 0.05, start: now });
+}
+
+function playBombSound(ctx, type) {
+  const now = ctx.currentTime;
+  if (type === "plant") {
+    playTone(ctx, { frequency: 880, endFrequency: 440, type: "sine", volume: 0.06, duration: 0.18, start: now });
+    playTone(ctx, { frequency: 660, endFrequency: 330, type: "sine", volume: 0.04, duration: 0.12, start: now + 0.22 });
+  } else if (type === "defuse") {
+    playTone(ctx, { frequency: 440, endFrequency: 880, type: "sine", volume: 0.06, duration: 0.2, start: now });
+    playTone(ctx, { frequency: 660, endFrequency: 1320, type: "sine", volume: 0.04, duration: 0.15, start: now + 0.24 });
+  } else if (type === "explode") {
+    // low boom
+    playTone(ctx, { frequency: 80, endFrequency: 20, type: "sawtooth", volume: 0.18, duration: 0.6, start: now });
+    playTone(ctx, { frequency: 200, endFrequency: 40, type: "square", volume: 0.1, duration: 0.4, start: now });
+    playTone(ctx, { frequency: 3000, endFrequency: 100, type: "sawtooth", volume: 0.06, duration: 0.2, start: now });
+  }
 }
 
 function playTone(ctx, { frequency, endFrequency, type = "sine", volume = 0.04, duration = 0.1, start = ctx.currentTime, sendReverb = false }) {

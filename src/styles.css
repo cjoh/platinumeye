@@ -88,6 +88,7 @@ input {
   opacity: 0.75;
 }
 
+.is-hidden,
 .lobby.is-hidden,
 .hud.is-hidden,
 .death-screen.is-hidden,
@@ -1125,4 +1126,191 @@ input {
   .weapon-inventory {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ── Bomb HUD ── */
+.bomb-hud {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  pointer-events: none;
+}
+
+.round-score {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 1.8rem;
+  font-weight: 900;
+  color: #f2edca;
+  text-shadow: 0 2px 6px #000a;
+}
+
+.round-score .score-sep { color: #888; }
+
+.round-timer {
+  font-size: 1.3rem;
+  font-weight: 900;
+  color: #e3bd59;
+  letter-spacing: 0.06em;
+}
+
+.round-timer.is-urgent { color: #ef6b5c; animation: pulse-timer 1s infinite; }
+@keyframes pulse-timer { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+
+.phase-label {
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  color: #aaa;
+}
+
+.team-label {
+  font-size: 0.8rem;
+  font-weight: 900;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+}
+
+.team-label.atk { background: #c0392b; color: #fff; }
+.team-label.def { background: #2980b9; color: #fff; }
+
+.cash-display {
+  font-size: 1rem;
+  font-weight: 900;
+  color: #5fd2a5;
+}
+
+.bomb-indicator {
+  font-size: 0.7rem;
+  font-weight: 900;
+  color: #ef6b5c;
+  animation: pulse-timer 0.9s infinite;
+  letter-spacing: 0.1em;
+}
+
+.interact-bar {
+  width: 160px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid #555;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+}
+
+.interact-bar span {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #e3bd59;
+  margin-bottom: 0.25rem;
+}
+
+.interact-track {
+  height: 5px;
+  background: #333;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.interact-fill {
+  height: 100%;
+  width: 0%;
+  background: #e3bd59;
+  transition: width 0.1s linear;
+}
+
+/* ── Buy Menu ── */
+.buy-menu {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(18,24,18,0.97);
+  border: 1px solid rgba(232,193,92,0.35);
+  border-radius: 6px;
+  padding: 1.2rem;
+  min-width: 380px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.buy-menu-title {
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  color: #e3bd59;
+  margin-bottom: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.buy-cash { color: #5fd2a5; }
+
+.buy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.buy-item {
+  background: #1e2b1e;
+  border: 1px solid #4a6040;
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  color: #f2edca;
+  text-align: left;
+  font-family: inherit;
+  min-height: 3rem;
+  display: block;
+  width: 100%;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.buy-item:hover:not(:disabled) {
+  background: #243224;
+  border-color: #e3bd59;
+}
+.buy-item:disabled { background: #161c16; border-color: #2c3a2c; cursor: not-allowed; color: #7a8a7a; }
+.buy-item:disabled .buy-item-cost { color: #556055; }
+
+.buy-item-name { font-size: 0.78rem; font-weight: 700; display: block; }
+.buy-item-cost { font-size: 0.68rem; color: #5fd2a5; display: block; margin-top: 0.15rem; }
+
+.buy-hint {
+  font-size: 0.58rem;
+  color: #666;
+  text-align: center;
+  letter-spacing: 0.08em;
+}
+
+/* ── Round Banner ── */
+.round-banner {
+  position: absolute;
+  top: 28%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.4rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  padding: 0.5rem 1.5rem;
+  border-radius: 4px;
+  text-align: center;
+  pointer-events: none;
+  animation: banner-in 0.3s ease-out both;
+}
+
+.round-banner.win  { background: rgba(95,210,165,0.18); color: #5fd2a5; border: 1px solid #5fd2a5; }
+.round-banner.loss { background: rgba(239,107,92,0.18);  color: #ef6b5c; border: 1px solid #ef6b5c; }
+
+@keyframes banner-in {
+  from { opacity:0; transform: translateX(-50%) scale(0.85); }
+  to   { opacity:1; transform: translateX(-50%) scale(1); }
 }

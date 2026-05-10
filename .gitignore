@@ -11,3 +11,6 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+.worktrees/
+.worktrees/
+.worktrees/

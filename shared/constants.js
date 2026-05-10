@@ -115,3 +115,38 @@ export const PICKUP_RULES = {
     respawnMs: 19000
   }
 };
+
+export const BOMB_MODES = { DEATHMATCH: "deathmatch", BOMB: "bomb" };
+
+export const ROUND_CONFIG = {
+  freezeMs: 15_000,
+  roundMs: 105_000,
+  postPlantMs: 40_000,
+  endMs: 5_000,
+  totalRounds: 24,
+  plantDurationMs: 3_000,
+  defuseDurationMs: 5_000,
+  winScore: 13
+};
+
+export const ECONOMY = {
+  startCash: 800,
+  maxCash: 9000,
+  killReward: 300,
+  assistReward: 50,
+  roundWin: 3250,
+  roundLossBase: 1900,
+  roundLossStep: 500,
+  roundLossMax: 2900,
+  plantReward: 300,
+  defuseReward: 300,
+};
+
+export const SHOP_ITEMS = [
+  { id: "cyclone",  type: "weapon", cost: 1000 },
+  { id: "argus",    type: "weapon", cost: 1200 },
+  { id: "oracle",   type: "weapon", cost: 1800 },
+  { id: "phantom",  type: "weapon", cost: 2700 },
+  { id: "armor50",  type: "armor",  cost: 400,  armorValue: 50  },
+  { id: "armor100", type: "armor",  cost: 800,  armorValue: 100 },
+];

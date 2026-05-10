@@ -651,16 +651,122 @@ const REFINERY = {
   ]
 };
 
+const CROSSFIRE = {
+  id: "crossfire",
+  name: "Crossfire",
+  description: "Compact urban layout. Short mid-lane, one long sightline.",
+  theme: "bunker",
+  mode: "bomb",
+  bounds: { minX: -28, maxX: 28, minZ: -22, maxZ: 22 },
+  ground: { material: "concrete", repeat: [11, 9] },
+  sky: { color: "#0e120c", fog: "#0e120c", fogDensity: 0.018, ceiling: 5.2 },
+  lighting: {
+    ambientSky: "#f4e3a3", ambientGround: "#1f2a1c", ambientIntensity: 1.4,
+    sunColor: "#ffe4a6", sunIntensity: 2.4, sunPosition: [-6, 14, 8]
+  },
+  sites: [
+    { id: "A", x: -18, z: -14, radius: 4.0 },
+    { id: "B", x: 18,  z: 14,  radius: 4.0 }
+  ],
+  attackerSpawns: [
+    { x: 0,  z: 18, yaw: Math.PI },
+    { x: -6, z: 18, yaw: Math.PI },
+    { x: 6,  z: 18, yaw: Math.PI }
+  ],
+  defenderSpawns: [
+    { x: 0,  z: -18, yaw: 0 },
+    { x: -6, z: -18, yaw: 0 },
+    { x: 6,  z: -18, yaw: 0 }
+  ],
+  spawnPoints: [
+    { x: 0, z: 18, yaw: Math.PI }, { x: 0, z: -18, yaw: 0 }
+  ],
+  colliders: [
+    { id: "mid-wall-w", x: -10, z: 0, w: 14, d: 1.2, h: 2.8, material: "wall" },
+    { id: "mid-wall-e", x: 10,  z: 0, w: 14, d: 1.2, h: 2.8, material: "wall" },
+    { id: "a-wall-n",  x: -18, z: -20, w: 12, d: 1.0, h: 3.2, material: "wall" },
+    { id: "a-wall-w",  x: -25, z: -14, w: 1.0, d: 13, h: 3.2, material: "wall" },
+    { id: "a-wall-e",  x: -12, z: -14, w: 1.0, d: 13, h: 3.2, material: "wall" },
+    { id: "b-wall-s",  x: 18,  z: 20,  w: 12, d: 1.0, h: 3.2, material: "wall" },
+    { id: "b-wall-e",  x: 25,  z: 14,  w: 1.0, d: 13, h: 3.2, material: "wall" },
+    { id: "b-wall-w",  x: 12,  z: 14,  w: 1.0, d: 13, h: 3.2, material: "wall" },
+    { id: "cover-mid-a", x: -4, z: -6, w: 2.4, d: 1.6, h: 1.3, material: "crate" },
+    { id: "cover-mid-b", x: 4,  z: 6,  w: 2.4, d: 1.6, h: 1.3, material: "crate" },
+    { id: "cover-a-1",   x: -20, z: -12, w: 1.6, d: 2.4, h: 1.3, material: "crate" },
+    { id: "cover-b-1",   x: 20,  z: 12,  w: 1.6, d: 2.4, h: 1.3, material: "crate" },
+  ],
+  pickups: [
+    { id: "med-mid-w", type: "medkit", x: -14, z: 0 },
+    { id: "med-mid-e", type: "medkit", x: 14,  z: 0 },
+  ],
+  props: []
+};
+
+const DOCKYARD = {
+  id: "dockyard",
+  name: "Dockyard",
+  description: "Industrial port. Two routes, warehouse A-site, open B-site.",
+  theme: "coastal",
+  mode: "bomb",
+  bounds: { minX: -40, maxX: 40, minZ: -32, maxZ: 32 },
+  ground: { material: "asphalt", repeat: [16, 13] },
+  sky: { color: "#0b1520", fog: "#0b1520", fogDensity: 0.012 },
+  lighting: {
+    ambientSky: "#b0cce0", ambientGround: "#1a2530", ambientIntensity: 1.2,
+    sunColor: "#ccdde8", sunIntensity: 2.0, sunPosition: [10, 18, -5]
+  },
+  sites: [
+    { id: "A", x: -26, z: -20, radius: 4.5 },
+    { id: "B", x: 26,  z: 20,  radius: 4.5 }
+  ],
+  attackerSpawns: [
+    { x: 0,  z: 28, yaw: Math.PI },
+    { x: -8, z: 28, yaw: Math.PI },
+    { x: 8,  z: 28, yaw: Math.PI }
+  ],
+  defenderSpawns: [
+    { x: -26, z: -28, yaw: 0 },
+    { x: 0,   z: -28, yaw: 0 },
+    { x: 26,  z: -28, yaw: 0 }
+  ],
+  spawnPoints: [
+    { x: 0, z: 28, yaw: Math.PI }, { x: 0, z: -28, yaw: 0 }
+  ],
+  colliders: [
+    { id: "warehouse-n",  x: -26, z: -26, w: 20, d: 1.0, h: 4.0, material: "wall" },
+    { id: "warehouse-w",  x: -37, z: -20, w: 1.0, d: 13, h: 4.0, material: "wall" },
+    { id: "warehouse-e",  x: -16, z: -22, w: 1.0, d: 9,  h: 4.0, material: "wall" },
+    { id: "crane-base",   x: 0, z: 0, w: 3.0, d: 3.0, h: 5.0, material: "industrial" },
+    { id: "crane-arm",    x: 10, z: 0, w: 20, d: 1.0, h: 1.0, material: "industrial" },
+    { id: "dock-wall-s",  x: 26,  z: 26, w: 20, d: 1.0, h: 2.2, material: "concrete" },
+    { id: "dock-wall-e",  x: 37,  z: 20, w: 1.0, d: 13, h: 2.2, material: "concrete" },
+    { id: "crate-a-1",  x: -24, z: -18, w: 2.4, d: 1.6, h: 1.3, material: "crate" },
+    { id: "crate-a-2",  x: -28, z: -16, w: 1.6, d: 2.4, h: 1.3, material: "crate" },
+    { id: "crate-b-1",  x: 24,  z: 18,  w: 2.4, d: 1.6, h: 1.3, material: "crate" },
+    { id: "crate-b-2",  x: 28,  z: 16,  w: 1.6, d: 2.4, h: 1.3, material: "crate" },
+    { id: "crate-mid",  x: -12, z: 8,   w: 2.4, d: 2.4, h: 1.3, material: "crate" },
+    { id: "drums-mid",  x: 12,  z: -8,  w: 2.4, d: 2.4, h: 1.2, material: "drum"  },
+  ],
+  pickups: [
+    { id: "med-a",   type: "medkit", x: -26, z: -18 },
+    { id: "med-b",   type: "medkit", x: 26,  z: 18  },
+    { id: "med-mid", type: "medkit", x: 0,   z: 0   },
+  ],
+  props: []
+};
+
 export const MAPS = {
   archive: ARCHIVE,
   bunker: BUNKER,
   coastal: COASTAL,
   forest: FOREST,
   frostgate: FROSTGATE,
-  refinery: REFINERY
+  refinery: REFINERY,
+  crossfire: CROSSFIRE,
+  dockyard: DOCKYARD
 };
 
-export const MAP_ORDER = ["bunker", "archive", "coastal", "forest", "frostgate", "refinery"];
+export const MAP_ORDER = ["bunker", "archive", "coastal", "forest", "frostgate", "refinery", "crossfire", "dockyard"];
 export const DEFAULT_MAP_ID = "bunker";
 
 export function getMap(id) {
