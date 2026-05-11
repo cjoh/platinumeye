@@ -20,6 +20,8 @@ try {
   const lobbyPreview = await desktop.newPage();
   await verifyLobbyMaps(lobbyPreview);
   await verifyGeneratedTextureAtlas(lobbyPreview, 20);
+  await verifyInviteLobby(lobbyPreview);
+  await verifyStatsEndpoint(lobbyPreview);
   await lobbyPreview.close();
 
   const desktopA = await desktop.newPage();
@@ -42,7 +44,7 @@ try {
   await verifyCanvas(mobilePage, "mobile");
   await mobile.close();
 
-  console.log("Browser verification passed: desktop and mobile canvases render, and same-room multiplayer joined.");
+  console.log("Browser verification passed: desktop and mobile canvases render, game-code multiplayer joined, and stats responded.");
 } finally {
   await browser.close();
 }
@@ -63,6 +65,40 @@ async function verifyLobbyMaps(page) {
     await page.click(`[data-map-id="${mapId}"]`);
     await page.waitForTimeout(450);
     await verifyCanvas(page, `map-${mapId}`);
+  }
+}
+
+async function verifyInviteLobby(page) {
+  await page.goto(`${baseUrl}/?gamecode=QA64&map=dockyard&bots=6`, { waitUntil: "networkidle" });
+  await page.waitForSelector("#lobby.has-invite-code", { timeout: 5000 });
+  const inviteState = await page.evaluate(() => {
+    function isVisible(element) {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    }
+
+    return {
+      code: document.querySelector("#roomInput")?.value,
+      mapVisible: isVisible(document.querySelector(".mission-panel")),
+      roomVisible: isVisible(document.querySelector("#roomInput")),
+      botVisible: isVisible(document.querySelector("#botInput")),
+      quickVisible: isVisible(document.querySelector("#quickJoinButton"))
+    };
+  });
+  if (inviteState.code !== "QA64" || inviteState.mapVisible || inviteState.roomVisible || inviteState.botVisible || inviteState.quickVisible) {
+    throw new Error(`invite lobby exposed setup controls: ${JSON.stringify(inviteState)}`);
+  }
+}
+
+async function verifyStatsEndpoint(page) {
+  const stats = await page.evaluate(async (url) => {
+    const response = await fetch(`${url}/stats.json`);
+    return { ok: response.ok, stats: await response.json() };
+  }, baseUrl);
+  if (!stats.ok || !Array.isArray(stats.stats?.maps) || !Array.isArray(stats.stats?.modes) || stats.stats?.persistence?.ok !== true) {
+    throw new Error(`stats endpoint failed: ${JSON.stringify(stats)}`);
   }
 }
 

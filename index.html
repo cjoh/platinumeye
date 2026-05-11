@@ -38,7 +38,7 @@
           <header class="lobby-panel-head">
             <span class="lobby-panel-step">03</span>
             <h2>Deploy</h2>
-            <p>Enter a room code or quick-join.</p>
+            <p>Create or enter a game code.</p>
           </header>
           <div class="join-fields">
             <label>
@@ -46,7 +46,7 @@
               <input id="nameInput" name="name" maxlength="16" autocomplete="nickname" value="Agent" />
             </label>
             <label>
-              <span>Room</span>
+              <span>Game Code</span>
               <input id="roomInput" name="room" maxlength="8" autocomplete="off" placeholder="AUTO" />
             </label>
             <label>
@@ -55,7 +55,7 @@
             </label>
           </div>
           <div class="join-actions">
-            <button id="quickJoinButton" type="button">Quick Room</button>
+            <button id="quickJoinButton" type="button">Quick Code</button>
             <button type="submit">Deploy</button>
           </div>
         </form>
@@ -64,7 +64,7 @@
       <div id="hud" class="hud is-hidden" aria-live="polite">
         <div class="top-strip">
           <div class="room-chip">
-            <span>ROOM</span>
+            <span>CODE</span>
             <strong id="roomCode">----</strong>
           </div>
           <div class="room-chip map-chip">
@@ -73,7 +73,7 @@
           </div>
           <div id="matchStatus" class="match-status" aria-live="polite"></div>
           <div id="feed" class="feed"></div>
-          <button id="copyRoomButton" class="icon-button" type="button" title="Copy room link" aria-label="Copy room link">LINK</button>
+          <button id="copyRoomButton" class="icon-button" type="button" title="Copy game link" aria-label="Copy game link">LINK</button>
         </div>
 
         <!-- Bomb mode HUD (hidden in deathmatch) -->

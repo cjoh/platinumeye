@@ -1,5 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { DEFAULT_AVATAR_ID, isAvatarId } from "../shared/avatars.js";
-import { DEFAULT_MAP_ID, getMap, isMapId } from "../shared/maps.js";
+import { DEFAULT_MAP_ID, MAP_ORDER, MAPS, getMap, getMapMode, isMapId } from "../shared/maps.js";
 import { BombGame } from "./bombGame.js";
 import { BOMB_MODES } from "../shared/constants.js";
 import {
@@ -31,6 +33,7 @@ import {
 
 const COLORS = ["#e8c15c", "#5fd2a5", "#ec6f5e", "#75a9ff", "#d995f6", "#efef8a", "#ff9f57", "#8ee0e4"];
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const STATS_SCHEMA_VERSION = 1;
 const BOT_PROFILES = [
   { key: "atlas", name: "Atlas", avatarId: "character-d", weapon: "cyclone", speed: 3.6, reactionMs: 1400, aimError: 0.22, shotPauseMs: 700, shotJitterMs: 480, pressure: 0.32 },
   { key: "vesper", name: "Vesper", avatarId: "character-k", weapon: "argus", speed: 3.4, reactionMs: 1700, aimError: 0.28, shotPauseMs: 900, shotJitterMs: 600, pressure: 0.28 },
@@ -44,6 +47,7 @@ class GameRoom {
     this.mapId = isMapId(mapId) ? mapId : DEFAULT_MAP_ID;
     this.botCount = sanitizeBotCount(botCount);
     this.arena = getMap(this.mapId);
+    this.createdAt = Date.now();
     this.players = new Map();
     this.pickups = this.arena.pickups.map((pickup) => ({
       ...pickup,
@@ -582,26 +586,28 @@ class GameRoom {
 export function registerGameServer(io) {
   const rooms = new Map();
   const socketRooms = new Map();
+  const stats = createStats();
 
   io.on("connection", (socket) => {
     socket.on("joinRoom", (payload, ack) => {
       const requestedRoom = sanitizeRoom(payload?.room);
       const requestedMap = isMapId(payload?.mapId) ? payload.mapId : DEFAULT_MAP_ID;
-      const requestedBotCount = sanitizeBotCount(payload?.botCount);
+      const requestedBotCount = payload?.botCount == null ? TRAINING_BOT_COUNT : sanitizeBotCount(payload.botCount);
       const roomCode = requestedRoom || createRoomCode();
       let room = rooms.get(roomCode);
       if (!room) {
         room = new GameRoom(roomCode, requestedMap, requestedBotCount);
         rooms.set(roomCode, room);
+        recordGameCreated(stats, room);
       }
 
-      if (room.size >= MAX_PLAYERS_PER_ROOM) {
+      const previousRoomCode = socketRooms.get(socket.id);
+      const isRejoiningSameRoom = previousRoomCode === roomCode;
+      if (room.size >= MAX_PLAYERS_PER_ROOM && !isRejoiningSameRoom) {
         ack?.({ ok: false, error: "Room is full" });
         return;
       }
-      room.setBotCount(requestedBotCount);
 
-      const previousRoomCode = socketRooms.get(socket.id);
       if (previousRoomCode && rooms.has(previousRoomCode)) {
         rooms.get(previousRoomCode).removePlayer(socket.id);
         socket.leave(previousRoomCode);
@@ -610,6 +616,7 @@ export function registerGameServer(io) {
       socket.join(roomCode);
       socketRooms.set(socket.id, roomCode);
       const player = room.addPlayer(socket.id, payload?.name, payload?.avatarId);
+      recordPlayerJoined(stats, room);
       room.ensureBots();
       ack?.({
         ok: true,
@@ -696,6 +703,167 @@ export function registerGameServer(io) {
       io.to(roomCode).emit("snapshot", room.serialize());
     }
   }, SNAPSHOT_MS);
+
+  return {
+    getStats() {
+      return serializeStats(stats, rooms);
+    }
+  };
+}
+
+function createStats() {
+  const statsFile = resolveStatsFilePath();
+  const persisted = readStatsFile(statsFile);
+  const now = Date.now();
+  const stats = {
+    processStartedAt: now,
+    lifetimeStartedAt: parseTimestamp(persisted?.createdAt) || now,
+    updatedAt: parseTimestamp(persisted?.updatedAt) || now,
+    statsFile,
+    lastPersistenceError: null,
+    gamesCreated: sanitizeStatNumber(persisted?.gamesCreated),
+    playerSessions: sanitizeStatNumber(persisted?.playerSessions),
+    gamesByMode: mapFromRecord(persisted?.gamesByMode),
+    gamesByMap: mapFromRecord(persisted?.gamesByMap),
+    playerSessionsByMode: mapFromRecord(persisted?.playerSessionsByMode),
+    playerSessionsByMap: mapFromRecord(persisted?.playerSessionsByMap)
+  };
+  persistStats(stats);
+  return stats;
+}
+
+function recordGameCreated(stats, room) {
+  const mode = getMapMode(room.mapId);
+  stats.gamesCreated += 1;
+  increment(stats.gamesByMode, mode);
+  increment(stats.gamesByMap, room.mapId);
+  persistStats(stats);
+}
+
+function recordPlayerJoined(stats, room) {
+  const mode = getMapMode(room.mapId);
+  stats.playerSessions += 1;
+  increment(stats.playerSessionsByMode, mode);
+  increment(stats.playerSessionsByMap, room.mapId);
+  persistStats(stats);
+}
+
+function serializeStats(stats, rooms) {
+  const activeRooms = Array.from(rooms.values()).filter((room) => room.humanCount > 0);
+  const activeByMode = countActiveBy(activeRooms, (room) => getMapMode(room.mapId));
+  const activeByMap = countActiveBy(activeRooms, (room) => room.mapId);
+  const activePlayersByMode = sumActivePlayersBy(activeRooms, (room) => getMapMode(room.mapId));
+  const activePlayersByMap = sumActivePlayersBy(activeRooms, (room) => room.mapId);
+
+  return {
+    startedAt: new Date(stats.processStartedAt).toISOString(),
+    lifetimeStartedAt: new Date(stats.lifetimeStartedAt).toISOString(),
+    updatedAt: new Date(stats.updatedAt).toISOString(),
+    uptimeMs: Date.now() - stats.processStartedAt,
+    persistence: {
+      file: stats.statsFile,
+      ok: !stats.lastPersistenceError,
+      error: stats.lastPersistenceError
+    },
+    gamesCreated: stats.gamesCreated,
+    playerSessions: stats.playerSessions,
+    activeGames: activeRooms.length,
+    activeHumanPlayers: activeRooms.reduce((total, room) => total + room.humanCount, 0),
+    activeBots: activeRooms.reduce((total, room) => total + Array.from(room.players.values()).filter((player) => player.isBot).length, 0),
+    modes: ["deathmatch", "bomb"].map((mode) => ({
+      mode,
+      label: mode === "bomb" ? "Bomb Defuse" : "Deathmatch",
+      gamesCreated: stats.gamesByMode.get(mode) || 0,
+      playerSessions: stats.playerSessionsByMode.get(mode) || 0,
+      activeGames: activeByMode.get(mode) || 0,
+      activeHumanPlayers: activePlayersByMode.get(mode) || 0
+    })),
+    maps: MAP_ORDER.map((mapId) => ({
+      mapId,
+      name: MAPS[mapId].name,
+      mode: getMapMode(mapId),
+      gamesCreated: stats.gamesByMap.get(mapId) || 0,
+      playerSessions: stats.playerSessionsByMap.get(mapId) || 0,
+      activeGames: activeByMap.get(mapId) || 0,
+      activeHumanPlayers: activePlayersByMap.get(mapId) || 0
+    }))
+  };
+}
+
+function countActiveBy(rooms, getKey) {
+  const counts = new Map();
+  for (const room of rooms) {
+    increment(counts, getKey(room));
+  }
+  return counts;
+}
+
+function sumActivePlayersBy(rooms, getKey) {
+  const counts = new Map();
+  for (const room of rooms) {
+    increment(counts, getKey(room), room.humanCount);
+  }
+  return counts;
+}
+
+function increment(map, key, amount = 1) {
+  map.set(key, (map.get(key) || 0) + amount);
+}
+
+function resolveStatsFilePath() {
+  return path.resolve(process.cwd(), process.env.STATS_FILE || "data/stats.json");
+}
+
+function readStatsFile(statsFile) {
+  if (!existsSync(statsFile)) return null;
+  try {
+    return JSON.parse(readFileSync(statsFile, "utf8"));
+  } catch (error) {
+    console.error(`Unable to read stats file at ${statsFile}:`, error);
+    return null;
+  }
+}
+
+function persistStats(stats) {
+  const updatedAt = Date.now();
+  const payload = {
+    version: STATS_SCHEMA_VERSION,
+    createdAt: new Date(stats.lifetimeStartedAt).toISOString(),
+    updatedAt: new Date(updatedAt).toISOString(),
+    gamesCreated: stats.gamesCreated,
+    playerSessions: stats.playerSessions,
+    gamesByMode: Object.fromEntries(stats.gamesByMode),
+    gamesByMap: Object.fromEntries(stats.gamesByMap),
+    playerSessionsByMode: Object.fromEntries(stats.playerSessionsByMode),
+    playerSessionsByMap: Object.fromEntries(stats.playerSessionsByMap)
+  };
+
+  try {
+    mkdirSync(path.dirname(stats.statsFile), { recursive: true });
+    const tempFile = `${stats.statsFile}.${process.pid}.tmp`;
+    writeFileSync(tempFile, `${JSON.stringify(payload, null, 2)}\n`);
+    renameSync(tempFile, stats.statsFile);
+    stats.updatedAt = updatedAt;
+    stats.lastPersistenceError = null;
+  } catch (error) {
+    stats.lastPersistenceError = error?.message || String(error);
+    console.error(`Unable to write stats file at ${stats.statsFile}:`, error);
+  }
+}
+
+function mapFromRecord(record) {
+  const entries = Object.entries(record || {}).map(([key, value]) => [key, sanitizeStatNumber(value)]);
+  return new Map(entries);
+}
+
+function sanitizeStatNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+}
+
+function parseTimestamp(value) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function applyPickup(player, pickup) {

@@ -1,6 +1,7 @@
 node_modules
 dist
 .verification
+data
 .git
 .DS_Store
 npm-debug.log*

@@ -767,6 +767,18 @@ export const MAPS = {
 };
 
 export const MAP_ORDER = ["bunker", "archive", "coastal", "forest", "frostgate", "refinery", "crossfire", "dockyard"];
+export const MAP_GROUPS = [
+  {
+    mode: "deathmatch",
+    label: "Deathmatch",
+    mapIds: MAP_ORDER.filter((id) => getMapMode(id) === "deathmatch")
+  },
+  {
+    mode: "bomb",
+    label: "Bomb Defuse",
+    mapIds: MAP_ORDER.filter((id) => getMapMode(id) === "bomb")
+  }
+].filter((group) => group.mapIds.length > 0);
 export const DEFAULT_MAP_ID = "bunker";
 
 export function getMap(id) {
@@ -775,4 +787,9 @@ export function getMap(id) {
 
 export function isMapId(id) {
   return typeof id === "string" && Object.prototype.hasOwnProperty.call(MAPS, id);
+}
+
+export function getMapMode(idOrMap) {
+  const map = typeof idOrMap === "string" ? getMap(idOrMap) : idOrMap;
+  return map?.mode === "bomb" ? "bomb" : "deathmatch";
 }

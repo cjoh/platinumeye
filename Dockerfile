@@ -14,6 +14,9 @@ FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=5173
+ENV STATS_FILE=/data/stats.json
+
+RUN mkdir -p /data
 
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules

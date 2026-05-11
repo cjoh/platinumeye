@@ -5,7 +5,7 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { io } from "socket.io-client";
 import { AVATARS, DEFAULT_AVATAR_ID, getAvatarById, isAvatarId } from "../shared/avatars.js";
-import { DEFAULT_MAP_ID, MAP_ORDER, MAPS, getMap, isMapId } from "../shared/maps.js";
+import { DEFAULT_MAP_ID, MAP_GROUPS, MAP_ORDER, MAPS, getMap, isMapId } from "../shared/maps.js";
 import {
   MAX_BOTS_PER_ROOM,
   MAX_ARMOR,
@@ -142,6 +142,7 @@ const dom = {
   lobby: document.querySelector("#lobby"),
   joinForm: document.querySelector("#joinForm"),
   quickJoinButton: document.querySelector("#quickJoinButton"),
+  deployButton: document.querySelector("#joinForm button[type='submit']"),
   nameInput: document.querySelector("#nameInput"),
   roomInput: document.querySelector("#roomInput"),
   botInput: document.querySelector("#botInput"),
@@ -196,6 +197,7 @@ const state = {
   connected: false,
   playerId: null,
   roomCode: "",
+  inviteCode: "",
   botCount: getSavedBotCount(),
   mapId: getSavedMapId(),
   arena: getMap(getSavedMapId()),
@@ -2616,7 +2618,7 @@ function bindEvents() {
   });
   dom.joinForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    joinRoom(dom.roomInput.value);
+    joinRoom(state.inviteCode || dom.roomInput.value);
   });
   dom.quickJoinButton.addEventListener("click", () => {
     dom.roomInput.value = "";
@@ -2755,28 +2757,37 @@ function updateAvatarPicker() {
 
 function renderMapPicker() {
   if (!dom.mapGrid) return;
-  dom.mapGrid.innerHTML = MAP_ORDER.map((id) => {
-    const map = MAPS[id];
-    const themeIcon =
-      map.theme === "bunker" ? "▣"
-      : map.theme === "coastal" ? "≈"
-      : map.theme === "forest" ? "♣"
-      : map.theme === "frost" ? "❄"
-      : map.theme === "refinery" ? "⚙"
-      : "■";
-    return `
-      <button class="map-option" type="button" role="radio" aria-checked="false" data-map-id="${id}">
-        <span class="map-icon map-icon-${map.theme}" aria-hidden="true">${themeIcon}</span>
-        <strong>${map.name}</strong>
-        <em>${map.description}</em>
-      </button>
-    `;
-  }).join("");
+  dom.mapGrid.innerHTML = MAP_GROUPS.map((group) => `
+    <section class="map-group" role="presentation" data-map-mode="${group.mode}">
+      <h3 class="map-group-title">${escapeHtml(group.label)}</h3>
+      <div class="map-group-options">
+        ${group.mapIds.map(renderMapOption).join("")}
+      </div>
+    </section>
+  `).join("");
 
   for (const button of dom.mapGrid.querySelectorAll(".map-option")) {
     button.addEventListener("click", () => selectMap(button.dataset.mapId));
   }
   updateMapPicker();
+}
+
+function renderMapOption(id) {
+  const map = MAPS[id];
+  const themeIcon =
+    map.theme === "bunker" ? "▣"
+    : map.theme === "coastal" ? "≈"
+    : map.theme === "forest" ? "♣"
+    : map.theme === "frost" ? "❄"
+    : map.theme === "refinery" ? "⚙"
+    : "■";
+  return `
+    <button class="map-option" type="button" role="radio" aria-checked="false" data-map-id="${id}">
+      <span class="map-icon map-icon-${map.theme}" aria-hidden="true">${themeIcon}</span>
+      <strong>${escapeHtml(map.name)}</strong>
+      <em>${escapeHtml(map.description)}</em>
+    </button>
+  `;
 }
 
 function selectMap(mapId) {
@@ -2849,18 +2860,25 @@ function bindTouchControls() {
 function hydrateLobbyFromUrl() {
   dom.botInput.value = String(state.botCount);
   const params = new URLSearchParams(window.location.search);
-  const room = params.get("room");
-  if (room) {
-    dom.roomInput.value = room.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  const linkedCode = sanitizeGameCode(params.get("gamecode") || params.get("code") || params.get("room"));
+  if (linkedCode) {
+    applyInviteCode(linkedCode);
   }
   const map = params.get("map");
-  if (map && isMapId(map)) {
+  if (!linkedCode && map && isMapId(map)) {
     selectMap(map);
   }
   const bots = params.get("bots");
-  if (bots !== null) {
+  if (!linkedCode && bots !== null) {
     setBotCount(bots);
   }
+}
+
+function applyInviteCode(code) {
+  state.inviteCode = sanitizeGameCode(code);
+  dom.roomInput.value = state.inviteCode;
+  dom.roomInput.readOnly = Boolean(state.inviteCode);
+  dom.lobby.classList.toggle("has-invite-code", Boolean(state.inviteCode));
 }
 
 function joinRoom(room) {
@@ -2871,14 +2889,23 @@ function joinRoom(room) {
     wireSocket(state.socket);
   }
   const name = dom.nameInput.value || "Agent";
+  const isInviteJoin = Boolean(state.inviteCode);
+  const joinPayload = { name, room, avatarId: state.local.avatarId };
+  if (!isInviteJoin) {
+    joinPayload.mapId = state.mapId;
+    joinPayload.botCount = botCount;
+  }
   state.socket.emit(
     "joinRoom",
-    { name, room, avatarId: state.local.avatarId, mapId: state.mapId, botCount },
+    joinPayload,
     (response) => {
       if (!response?.ok) {
-        dom.quickJoinButton.textContent = response?.error || "Room Error";
+        const errorText = response?.error || "Game Error";
+        dom.quickJoinButton.textContent = errorText;
+        dom.deployButton.textContent = errorText;
         setTimeout(() => {
-          dom.quickJoinButton.textContent = "Quick Room";
+          dom.quickJoinButton.textContent = "Quick Code";
+          dom.deployButton.textContent = "Deploy";
         }, 1600);
         return;
       }
@@ -2895,7 +2922,7 @@ function joinRoom(room) {
       if (dom.mapName) dom.mapName.textContent = state.arena.name;
       dom.lobby.classList.add("is-hidden");
       dom.hud.classList.remove("is-hidden");
-      history.replaceState(null, "", `?room=${response.roomCode}&map=${state.mapId}&bots=${state.botCount}`);
+      history.replaceState(null, "", `?gamecode=${encodeURIComponent(response.roomCode)}`);
       applyLocalPlayer(response.player);
       playSound("deploy");
       updateLockPrompt();
@@ -4474,8 +4501,10 @@ function updateLockPrompt() {
 }
 
 function copyRoomLink() {
-  const url = `${location.origin}${location.pathname}?room=${state.roomCode}&map=${state.mapId}&bots=${state.botCount}`;
-  navigator.clipboard?.writeText(url);
+  const url = new URL(location.href);
+  url.search = new URLSearchParams({ gamecode: state.roomCode }).toString();
+  url.hash = "";
+  navigator.clipboard?.writeText(url.toString());
   dom.copyRoomButton.textContent = "COPIED";
   setTimeout(() => {
     dom.copyRoomButton.textContent = "LINK";
@@ -4869,6 +4898,11 @@ function sanitizeBotCount(value) {
   const count = Number.parseInt(value, 10);
   if (!Number.isFinite(count)) return TRAINING_BOT_COUNT;
   return Math.round(clamp(count, 0, MAX_BOTS_PER_ROOM));
+}
+
+function sanitizeGameCode(code) {
+  if (!code) return "";
+  return String(code).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
 }
 
 function lerp(a, b, t) {

@@ -11,9 +11,11 @@ npm install
 npm run dev
 ```
 
-Open the printed local URL in multiple tabs or share it on the same network. Players who enter the same room code join the same match.
+Open the printed local URL in multiple tabs or share it on the same network. The first player picks a map and game code; everyone else who enters that game code joins the same map automatically.
 
-Solo rooms are playable too: the server fills the match with a few simulation agents until more human players join.
+Solo games are playable too: the server fills the match with a few simulation agents until more human players join.
+
+Server stats are available at `/stats` while the game server is running. Lifetime counters are persisted to `data/stats.json` by default. Set `STATS_FILE=/path/to/stats.json` to store them elsewhere; Docker Compose mounts `./data` into the container at `/data`.
 
 ## Build
 
