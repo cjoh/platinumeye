@@ -11,6 +11,7 @@
     "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "express": "^4.19.2",
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",

@@ -10,6 +10,7 @@ import {
   MAX_HEALTH,
   MAX_PLAYERS_PER_ROOM,
   PICKUP_RULES,
+  PLAYER_BODY_HEIGHT,
   PLAYER_EYE_HEIGHT,
   PLAYER_RADIUS,
   RESPAWN_MS,
@@ -22,14 +23,17 @@ import {
 import {
   clamp,
   distance2d,
+  findClimbableLadder,
   floorHeightAt,
   nearestWallIntersection,
   normalizeAngle,
   normalizeVector,
-  resolveMovement,
   vectorFromYawPitch,
   intersectRaySphere
 } from "../shared/collision.js";
+import { createArenaPhysics, initializePhysics } from "../shared/physics.js";
+
+await initializePhysics();
 
 const COLORS = ["#e8c15c", "#5fd2a5", "#ec6f5e", "#75a9ff", "#d995f6", "#efef8a", "#ff9f57", "#8ee0e4"];
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -42,11 +46,16 @@ const BOT_PROFILES = [
 const BOT_SPAWN_GRACE_MS = 1700;
 
 class GameRoom {
-  constructor(code, mapId, botCount = TRAINING_BOT_COUNT) {
+  constructor(code, mapId, botCount = TRAINING_BOT_COUNT, settings = {}) {
     this.code = code;
     this.mapId = isMapId(mapId) ? mapId : DEFAULT_MAP_ID;
     this.botCount = sanitizeBotCount(botCount);
+    this.settings = {
+      showPlayerLocations: Boolean(settings.showPlayerLocations)
+    };
     this.arena = getMap(this.mapId);
+    this.physics = createArenaPhysics(this.arena);
+    this.verticalLimit = getArenaVerticalLimit(this.arena);
     this.createdAt = Date.now();
     this.players = new Map();
     this.pickups = this.arena.pickups.map((pickup) => ({
@@ -213,13 +222,31 @@ class GameRoom {
       x: Number(state?.position?.x),
       z: Number(state?.position?.z)
     };
+    const desiredY = Number(state?.yOffset);
     if (Number.isFinite(desired.x) && Number.isFinite(desired.z)) {
       const maxStep = 9.5 * dt + 0.3;
+      const maxStepUp = 8 * dt + 0.55;
+      const maxStepDown = 24 * dt + 0.9;
       const dx = clamp(desired.x - player.pos.x, -maxStep, maxStep);
       const dz = clamp(desired.z - player.pos.z, -maxStep, maxStep);
-      player.pos = resolveMovement(this.arena, player.pos, { x: player.pos.x + dx, z: player.pos.z + dz }, PLAYER_RADIUS);
+      const dy = Number.isFinite(desiredY)
+        ? clamp(desiredY - player.yOffset, -maxStepDown, maxStepUp)
+        : -2.4 * dt;
+      const motion = this.physics.moveCharacter({
+        x: player.pos.x,
+        y: player.yOffset,
+        z: player.pos.z
+      }, {
+        x: dx,
+        y: dy,
+        z: dz
+      }, {
+        radius: PLAYER_RADIUS,
+        height: PLAYER_BODY_HEIGHT
+      });
+      player.pos = { x: motion.position.x, z: motion.position.z };
+      player.yOffset = clamp(motion.position.y, 0, this.verticalLimit + PLAYER_BODY_HEIGHT + 8);
     }
-    const floorY = floorHeightAt(this.arena, player.pos);
 
     if (Number.isFinite(state?.yaw)) {
       player.yaw = normalizeAngle(state.yaw);
@@ -227,16 +254,25 @@ class GameRoom {
     if (Number.isFinite(state?.pitch)) {
       player.pitch = clamp(state.pitch, -1.25, 1.1);
     }
-    if (Number.isFinite(state?.yOffset)) {
-      player.yOffset = clamp(state.yOffset, floorY, floorY + 3.5);
-    } else {
-      player.yOffset = floorY;
-    }
     if (Number.isFinite(state?.crouch)) {
       player.crouch = clamp(state.crouch, 0, 1);
     }
     player.lastStateAt = now;
     this.lastActiveAt = now;
+  }
+
+  climbLadder(id, ladderId) {
+    const player = this.players.get(id);
+    if (!player || !player.alive) return false;
+
+    const climb = findClimbableLadder(this.arena, player.pos, player.yOffset);
+    if (!climb || (ladderId && climb.ladder.id !== ladderId)) return false;
+
+    player.pos = { x: climb.top.x, z: climb.top.z };
+    player.yOffset = climb.top.y;
+    player.lastStateAt = Date.now();
+    this.lastActiveAt = Date.now();
+    return true;
   }
 
   switchWeapon(id, requestedWeapon) {
@@ -439,8 +475,20 @@ class GameRoom {
       z: forward.z * push + side.z * bot.ai.pressure
     });
     const speed = profile.speed * (bot.health < 36 ? 0.82 : 1);
-    bot.pos = resolveMovement(this.arena, bot.pos, { x: bot.pos.x + move.x * speed * dt, z: bot.pos.z + move.z * speed * dt }, PLAYER_RADIUS);
-    bot.yOffset = floorHeightAt(this.arena, bot.pos);
+    const motion = this.physics.moveCharacter({
+      x: bot.pos.x,
+      y: bot.yOffset,
+      z: bot.pos.z
+    }, {
+      x: move.x * speed * dt,
+      y: -3.2 * dt,
+      z: move.z * speed * dt
+    }, {
+      radius: PLAYER_RADIUS,
+      height: PLAYER_BODY_HEIGHT
+    });
+    bot.pos = { x: motion.position.x, z: motion.position.z };
+    bot.yOffset = motion.position.y;
     bot.yaw = Math.atan2(-forward.x, -forward.z);
     bot.pitch = clamp(Math.atan2((target.yOffset || 0) - (bot.yOffset || 0), distance), -0.35, 0.32);
     bot.crouch = distance < 10 && Math.sin(now * 0.004 + bot.joinedAt) > 0.65 ? 0.65 : 0;
@@ -544,6 +592,7 @@ class GameRoom {
       roomCode: this.code,
       mapId: this.mapId,
       botCount: this.botCount,
+      settings: this.settings,
       serverTime: Date.now(),
       players: Array.from(this.players.values()).map((player) => ({
         id: player.id,
@@ -593,10 +642,13 @@ export function registerGameServer(io) {
       const requestedRoom = sanitizeRoom(payload?.room);
       const requestedMap = isMapId(payload?.mapId) ? payload.mapId : DEFAULT_MAP_ID;
       const requestedBotCount = payload?.botCount == null ? TRAINING_BOT_COUNT : sanitizeBotCount(payload.botCount);
+      const requestedSettings = {
+        showPlayerLocations: Boolean(payload?.showPlayerLocations)
+      };
       const roomCode = requestedRoom || createRoomCode();
       let room = rooms.get(roomCode);
       if (!room) {
-        room = new GameRoom(roomCode, requestedMap, requestedBotCount);
+        room = new GameRoom(roomCode, requestedMap, requestedBotCount, requestedSettings);
         rooms.set(roomCode, room);
         recordGameCreated(stats, room);
       }
@@ -623,6 +675,7 @@ export function registerGameServer(io) {
         roomCode,
         mapId: room.mapId,
         botCount: room.botCount,
+        settings: room.settings,
         playerId: socket.id,
         player: room.serialize().players.find((item) => item.id === player.id)
       });
@@ -637,6 +690,13 @@ export function registerGameServer(io) {
     socket.on("switchWeapon", (weaponId) => {
       const room = rooms.get(socketRooms.get(socket.id));
       room?.switchWeapon(socket.id, weaponId);
+    });
+
+    socket.on("climbLadder", (ladderId) => {
+      const room = rooms.get(socketRooms.get(socket.id));
+      if (room?.climbLadder(socket.id, ladderId)) {
+        io.to(room.code).emit("snapshot", room.serialize());
+      }
     });
 
     socket.on("buy", (itemId) => {
@@ -864,6 +924,23 @@ function sanitizeStatNumber(value) {
 function parseTimestamp(value) {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function getArenaVerticalLimit(arena) {
+  let maxY = 0;
+  for (const floor of arena.floors || []) {
+    maxY = Math.max(maxY, floor.y || 0);
+  }
+  for (const ladder of arena.ladders || []) {
+    maxY = Math.max(maxY, ladder.lowY || 0, ladder.highY || 0);
+  }
+  for (const hill of arena.hills || []) {
+    maxY = Math.max(maxY, (hill.baseY || 0) + (hill.height || 0));
+  }
+  for (const collider of arena.colliders || []) {
+    maxY = Math.max(maxY, (collider.y || 0) + (collider.h || 0));
+  }
+  return maxY;
 }
 
 function applyPickup(player, pickup) {

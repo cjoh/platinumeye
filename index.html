@@ -34,10 +34,10 @@
           <div id="mapGrid" class="map-grid" role="radiogroup" aria-label="Choose map"></div>
         </section>
 
-        <form id="joinForm" class="lobby-panel join-panel" aria-label="Deploy">
+        <form id="joinForm" class="lobby-panel join-panel" aria-label="Launch">
           <header class="lobby-panel-head">
             <span class="lobby-panel-step">03</span>
-            <h2>Deploy</h2>
+            <h2>Launch</h2>
             <p>Create or enter a game code.</p>
           </header>
           <div class="join-fields">
@@ -54,9 +54,15 @@
               <input id="botInput" name="bots" type="number" min="0" max="6" step="1" inputmode="numeric" value="2" />
             </label>
           </div>
+          <label class="match-toggle">
+            <input id="playerLocationsInput" name="playerLocations" type="checkbox" />
+            <span>
+              <strong>Show players on map</strong>
+              <em>Reveal player dots on the radar</em>
+            </span>
+          </label>
           <div class="join-actions">
-            <button id="quickJoinButton" type="button">Quick Code</button>
-            <button type="submit">Deploy</button>
+            <button type="submit">Launch</button>
           </div>
         </form>
       </section>
@@ -103,6 +109,9 @@
 
         <!-- Round result banner -->
         <div id="roundBanner" class="round-banner is-hidden"></div>
+
+        <!-- Multi-kill streak banner -->
+        <div id="streakBanner" class="streak-banner is-hidden"></div>
 
         <div class="reticle" aria-hidden="true">
           <span></span>

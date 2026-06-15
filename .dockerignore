@@ -2,6 +2,7 @@ node_modules
 dist
 .verification
 data
+/models
 .git
 .DS_Store
 npm-debug.log*
