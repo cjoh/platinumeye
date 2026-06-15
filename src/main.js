@@ -386,6 +386,7 @@ let waterPlanes = [];
 let foliageMaterials = [];
 let animatedProps = [];
 let weatherSystem = null;
+let lastWaterWaveAt = 0; // throttle timestamp for water vertex displacement
 
 const weaponRig = createWeaponRig();
 scene.add(weaponRig.group);
@@ -489,7 +490,9 @@ function buildArena(arena) {
   const sun = new THREE.DirectionalLight(arena.lighting.sunColor, arena.lighting.sunIntensity);
   sun.position.set(...arena.lighting.sunPosition);
   sun.castShadow = true;
-  const shadowRes = RENDER_QUALITY === "high" ? 4096 : 2048;
+  // 2048 keeps shadows crisp enough for the stylized look while cutting the
+  // shadow pass to a quarter of the 4096 texel count — a large GPU win.
+  const shadowRes = RENDER_QUALITY === "high" ? 2048 : 1024;
   sun.shadow.mapSize.set(shadowRes, shadowRes);
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 90;
@@ -4897,25 +4900,30 @@ function updatePickups(time) {
 }
 
 function updateWater(time) {
+  // Texture scroll is cheap — run it every frame for smooth surface motion.
   for (const water of waterPlanes) {
     if (!water.texture) continue;
     water.texture.offset.x = (time * 0.03) % 1;
     water.texture.offset.y = (time * 0.022) % 1;
-    // Vertex wave displacement for non-frozen water
-    if (!water.frozen && water.geometry) {
-      const positions = water.geometry.attributes.position;
-      for (let i = 0; i < positions.count; i += 1) {
-        const x = positions.getX(i);
-        const y = positions.getY(i);
-        // The plane is rotated to lie on Y=0; before rotation, "z" displacement is the third coord.
-        const wave =
-          Math.sin(x * 0.18 + time * 1.6) * 0.07 +
-          Math.cos(y * 0.22 + time * 1.2) * 0.05;
-        positions.setZ(i, wave);
-      }
-      positions.needsUpdate = true;
-      water.geometry.computeVertexNormals();
+  }
+  // Vertex wave displacement is expensive (per-vertex CPU loop + GPU re-upload).
+  // Throttle to ~18 Hz; the waves are subtle enough that this is imperceptible,
+  // and we skip computeVertexNormals entirely (flat-up normals read fine on a
+  // shimmering, metallic water surface and that call was the dominant cost).
+  if (time - lastWaterWaveAt < 0.055) return;
+  lastWaterWaveAt = time;
+  for (const water of waterPlanes) {
+    if (water.frozen || !water.geometry) continue;
+    const positions = water.geometry.attributes.position;
+    for (let i = 0; i < positions.count; i += 1) {
+      const x = positions.getX(i);
+      const y = positions.getY(i);
+      const wave =
+        Math.sin(x * 0.18 + time * 1.6) * 0.07 +
+        Math.cos(y * 0.22 + time * 1.2) * 0.05;
+      positions.setZ(i, wave);
     }
+    positions.needsUpdate = true;
   }
 }
 

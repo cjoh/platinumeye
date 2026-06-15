@@ -729,8 +729,11 @@ export function registerGameServer(io) {
       if (!room) return;
       const event = room.shoot(socket.id, payload);
       if (event) {
+        // Emit the lightweight shot event immediately for tracers / hitmarkers /
+        // sound. Updated health/score state rides the next 20 Hz snapshot tick
+        // (≤50 ms away) — broadcasting a full serialize() per bullet here spammed
+        // the network on full-auto weapons and caused rubber-banding.
         io.to(roomCode).emit(event.type, event);
-        io.to(roomCode).emit("snapshot", room.serialize());
       }
     });
 
